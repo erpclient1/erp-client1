@@ -55,7 +55,7 @@
   /* ---------- Loader PO + turunan (dipakai PO, GR, DO, Report, Stock, Analisa) ---------- */
   ERP.loadPO = async () => {
     const [pos, lines, pays, grs, gri, sups, users, items, dos, doi, clients, pmts, pmi] = await Promise.all([
-      DB.list('purchase_orders', { order: 'po_seq', desc: true }), DB.list('po_items', { order: 'line_no' }), DB.list('po_payments', { order: 'pay_date' }),
+      DB.list('purchase_orders', { order: 'po_date', desc: true }), DB.list('po_items', { order: 'line_no' }), DB.list('po_payments', { order: 'pay_date' }),
       DB.list('goods_receipts', { order: 'gr_date' }), DB.list('gr_items'), DB.list('suppliers', { order: 'name' }), DB.list('app_users'), DB.list('items', { order: 'brand' }),
       DB.list('delivery_orders', { order: 'do_date' }), DB.list('do_items'), DB.list('clients', { order: 'name' }), DB.list('payments', { order: 'pay_date' }), DB.list('payment_items'),
     ]);
@@ -67,6 +67,7 @@
     const L = group(lines, 'po_id'), P = group(pays, 'po_id'), G = group(grs, 'po_id'), GI = group(gri, 'gr_id'), DOs = group(dos, 'po_id'), DI = group(doi, 'do_id');
     const add = (m, id, grade, q) => { m[id] = m[id] || { G: 0, D: 0 }; m[id][grade === 'D' ? 'D' : 'G'] += Number(q); };
     dos.forEach((d) => { d.client = cliMap[d.client_id] || { name: '(dihapus)' }; d.items = DI[d.id] || []; d.total = ERP.sum(d.items, (i) => Number(i.qty)); d.creator = (userMap[d.created_by] || {}).full_name || ''; });
+    pos.sort((a, b) => String(b.po_date).localeCompare(String(a.po_date)) || String(b.po_number).localeCompare(String(a.po_number)));
     pos.forEach((p) => {
       p.supplier = supMap[p.supplier_id] || { name: '(dihapus)', id: null };
       p.items = (L[p.id] || []).sort((a, b) => a.line_no - b.line_no);
