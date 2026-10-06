@@ -56,6 +56,18 @@
   }
 
   /* ---------- Aksi ---------- */
+  // Hapus PO: hanya bila belum ada data terkait (penerimaan barang, Delivery Order, pembayaran)
+  async function deletePO(p, after) {
+    if (!ERP.can.write()) { ERP.toast('Hanya Admin atau Supervisor yang dapat menghapus PO', 'err'); return; }
+    const used = [];
+    if (p.receipts.length) used.push(`${p.receipts.length} penerimaan barang (Goods Received)`);
+    if (p.dos.length) used.push(`${p.dos.length} Delivery Order`);
+    if (p.payments.length) used.push(`${p.payments.length} pembayaran`);
+    if (used.length) { ERP.toast(`PO ${p.po_number} tidak bisa dihapus karena sudah ada ${used.join(', ')}. Hapus data terkait itu dulu.`, 'err'); return; }
+    if (!(await ERP.confirm(`Hapus <b>${esc(p.po_number)}</b> (${esc(p.supplier.name)}, ${fmtMoney(p.total, p.currency)})?<br><small>PO dan seluruh baris itemnya dihapus permanen.</small>`, { danger: true }))) return;
+    try { await DB.remove('purchase_orders', p.id); ERP.toast('PO dihapus'); if (after) after(); ERP.refresh(); } catch (e) { ERP.toast(e.message, 'err'); }
+  }
+
   async function approve(p) {
     if (!ERP.can.approve()) { ERP.toast('Hanya Admin atau Supervisor yang dapat approve', 'err'); return; }
     if (!(await ERP.confirm(`Approve <b>${esc(p.po_number)}</b> (${fmtMoney(p.total, p.currency)})?`))) return;
@@ -91,6 +103,7 @@
         ...(ERP.can.write() ? [{ icon: 'edit', tip: 'Edit PO', onClick: (mm) => { mm.close(); location.hash = '#/po/edit/' + p.id; } }] : []),
         ...(ERP.can.approve() && p.status !== 'approved' ? [{ icon: 'check', tip: 'Approve PO', cls: 'ok', onClick: (mm) => { mm.close(); approve(p); } }] : []),
         { icon: 'download', tip: 'Export Excel PO ini', onClick: () => exportPOs([p], 'PO_' + p.po_number + '.xlsx') },
+        ...(ERP.can.write() ? [{ icon: 'trash', tip: 'Hapus PO', cls: 'danger', onClick: (mm) => deletePO(p, () => mm.close()) }] : []),
       ],
     });
     return m;
@@ -132,7 +145,8 @@
       { label: '', cls: 'act', html: (p) => btn('eye', 'Lihat detail', `data-a="view" data-id="${p.id}"`, 'sm') + btn('print', 'Print PO', `data-a="print" data-id="${p.id}"`, 'sm')
         + (canW ? btn('edit', 'Edit (perlu approval ulang)', `data-a="edit" data-id="${p.id}"`, 'sm') : '')
         + (ERP.can.approve() && p.status !== 'approved' ? btn('check', 'Approve PO', `data-a="approve" data-id="${p.id}"`, 'sm ok') : '')
-        + btn('download', 'Export Excel PO ini', `data-a="xls" data-id="${p.id}"`, 'sm') },
+        + btn('download', 'Export Excel PO ini', `data-a="xls" data-id="${p.id}"`, 'sm')
+        + (canW ? btn('trash', 'Hapus PO', `data-a="del" data-id="${p.id}"`, 'sm danger') : '') },
     ];
     const draw = () => {
       const base = data.pos.filter(matches);
@@ -151,7 +165,7 @@
     $('#list').onclick = (e) => {
       const b = e.target.closest('[data-a]'); if (!b) return;
       const p = data.pos.find((x) => x.id === b.dataset.id);
-      ({ view: () => detailModal(p, data), print: () => printPO(p, data.userMap), edit: () => (location.hash = '#/po/edit/' + p.id), approve: () => approve(p), xls: () => exportPOs([p], 'PO_' + p.po_number + '.xlsx') })[b.dataset.a]();
+      ({ view: () => detailModal(p, data), print: () => printPO(p, data.userMap), edit: () => (location.hash = '#/po/edit/' + p.id), approve: () => approve(p), xls: () => exportPOs([p], 'PO_' + p.po_number + '.xlsx'), del: () => deletePO(p) })[b.dataset.a]();
     };
   }
 

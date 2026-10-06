@@ -175,7 +175,13 @@ function restrictDelete(t, row) {
   const used = (tbl, col, msg) => { if (store[tbl].some((r) => r[col] === row.id)) throw fail(400, msg); };
   if (t === 'suppliers') used('purchase_orders', 'supplier_id', 'Supplier dipakai di PO');
   if (t === 'clients') used('delivery_orders', 'client_id', 'Client dipakai di Delivery Order');
-  if (t === 'purchase_orders') used('delivery_orders', 'po_id', 'PO dipakai di Delivery Order');
+  if (t === 'purchase_orders') {
+    used('delivery_orders', 'po_id', 'PO dipakai di Delivery Order');
+    if (!row.is_dummy) { // pembersihan data contoh boleh menghapus PO beserta turunannya
+      used('goods_receipts', 'po_id', 'PO sudah punya penerimaan barang');
+      used('po_payments', 'po_id', 'PO sudah punya pembayaran');
+    }
+  }
   if (t === 'divisions') used('app_users', 'division_id', 'Divisi masih dipakai user');
   if (t === 'goods_receipts') { const ids = new Set(store.gr_items.filter((x) => x.gr_id === row.id).map((x) => x.id)); if (store.payment_items.some((x) => ids.has(x.gr_item_id))) throw fail(400, 'Penerimaan sudah dibayar; hapus pembayaran terkait dulu'); }
   if (t === 'gr_items' && store.payment_items.some((x) => x.gr_item_id === row.id)) throw fail(400, 'Baris penerimaan sudah dibayar; hapus pembayaran terkait dulu');
