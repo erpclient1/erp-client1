@@ -19,10 +19,10 @@
           const ds = dosOf(g), isG = g === 'G', rec = isG ? r.G : r.D, out = isG ? o.G : o.D;
           return {
             ...base, grade: g, custs: uniq(ds.map((d) => d.client.name)), doNos: uniq(ds.map((d) => d.do_number)),
-            inv: uniq([p.invoice_no, ...ds.map((d) => d.inv_no)]), fp: uniq([p.fp_no, ...ds.map((d) => d.fp_no)]),
+            inv: uniq(ds.map((d) => d.inv_no)), fp: uniq([...(p.fpNos || []), ...ds.map((d) => d.fp_no)]),
             poDate: p.po_date, rcvDate: p.lastRecv[i.id + '|' + g] || null,
             qtyPO: isG ? Number(i.qty) : null, recv: rec, short: isG ? Math.max(0, Number(i.qty) - r.G - r.D) : null, out,
-            balReport: isG ? Number(i.qty) - out : rec - out, balStock: rec - out,
+            balReport: rec - out, balStock: rec - out,
           };
         };
         rows.push(mk('G'));
@@ -79,7 +79,7 @@
       if (!R.to) R.to = ERP.today();
       v.innerHTML = filterBar('r', R) + `<div class="fld"><span>Status penerimaan</span><select id="f-st"><option value="all">Semua</option><option value="short">Belum lengkap diterima (ada Kurang)</option><option value="full">Sudah lengkap diterima</option></select></div>
         <div class="tb-actions" style="margin-left:auto">${btn('download', 'Export ke Excel', 'id="b-exp"')}${btn('print', 'Print', 'id="b-prt"')}</div></div><div id="list"></div><div class="note" id="foot"></div>
-        <div class="note">Satu baris = satu varian pada satu PO. <b>Qty Out</b> = barang keluar lewat Delivery Order. <b>Balance</b> = Qty PO − Qty Out (baris D: Diterima − Out). <b>Kurang</b> = Qty PO − (Good + Defect yang sudah diterima).</div>`;
+        <div class="note">Satu baris = satu varian pada satu PO. <b>Qty Out</b> = barang keluar lewat Delivery Order. <b>Balance</b> = Qty Diterima − Qty Out. <b>Kurang</b> = Qty PO − (Good + Defect yang sudah diterima).</div>`;
       $('#q').value = R.q; $('#f-st').value = R.status;
       const cols = colsFor('report');
       const rowsNow = () => all.filter((r) => r.poDate >= R.from && r.poDate <= R.to && (!R.q || searchText(r).includes(R.q)) && (R.status === 'all' || (R.status === 'short' ? r.short > 0 : r.grade === 'G' && r.short === 0)));

@@ -9,8 +9,8 @@ const cors = {
 };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
 
-const ROLES = ['admin', 'supervisor', 'gudang', 'viewer'];
-const MODULES = ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'report', 'stock', 'analysis', 'users', 'settings'];
+const ROLES = ['admin', 'supervisor', 'gudang', 'finance', 'viewer'];
+const MODULES = ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis', 'users', 'settings'];
 
 async function derivePassword(userId: string) {
   const secret = Deno.env.get('PIN_LOGIN_SECRET');
@@ -32,7 +32,7 @@ function validate(p: any, creating: boolean) {
 async function createUser(admin: any, p: any) {
   validate(p, true);
   const { data: row, error } = await admin.from('app_users')
-    .insert({ username: p.username.toLowerCase(), full_name: p.full_name.trim(), role: p.role, modules: p.modules, active: true })
+    .insert({ username: p.username.toLowerCase(), full_name: p.full_name.trim(), role: p.role, modules: p.modules, division_id: p.division_id || null, active: true })
     .select().single();
   if (error) throw new Error(error.code === '23505' ? 'Username sudah dipakai' : error.message);
   try {
@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
       if (body.id === me.id && (!body.active || body.role !== 'admin' || !body.modules.includes('users')))
         return json({ error: 'Tidak dapat menonaktifkan / menurunkan akses akun sendiri' }, 400);
       const { error } = await admin.from('app_users')
-        .update({ full_name: body.full_name.trim(), role: body.role, modules: body.modules, active: !!body.active }).eq('id', body.id);
+        .update({ full_name: body.full_name.trim(), role: body.role, modules: body.modules, division_id: body.division_id || null, active: !!body.active }).eq('id', body.id);
       if (error) throw error;
       if (body.pin) { const { error: e2 } = await admin.rpc('set_pin', { p_user: body.id, p_pin: String(body.pin) }); if (e2) throw e2; }
       return json({ ok: true });

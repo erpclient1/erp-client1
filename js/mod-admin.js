@@ -11,23 +11,25 @@
     return `<div class="grid c2">
       ${F('Username *', `<input name="username" value="${esc(u.username)}" ${u.id ? 'readonly' : ''} autocapitalize="off" spellcheck="false">`)}
       ${F('Nama lengkap *', `<input name="full_name" value="${esc(u.full_name)}">`)}
+      ${F('Divisi (untuk nomor PO)', `<select name="division_id">${ERP.options(ERP.divisions, u.division_id || '', 'id', 'code', '— tanpa divisi —')}</select>`)}
       ${F('Role', `<select name="role">${Object.entries(ERP.ROLE_LABEL).map(([k, l]) => `<option value="${k}" ${k === u.role ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
       ${F(u.id ? 'PIN baru (4 digit, kosong = tidak diubah)' : 'PIN (4 digit) *', `<input name="pin" inputmode="numeric" maxlength="4" pattern="\\d{4}" autocomplete="off" placeholder="••••">`)}
     </div>
     <div class="sec-t">Modul yang boleh diakses</div>
     <div class="chk-row" id="mods">${ERP.MODS_ALL.map((m) => `<label class="chk"><input type="checkbox" data-mod="${m}" ${u.modules.includes(m) ? 'checked' : ''}> ${esc(ERP.MOD_LABEL[m])}</label>`).join('')}</div>
-    <div class="note">Admin (superuser): semua fungsi + <b>approve PO</b> + kelola user · Supervisor: kelola data, PO, pembayaran + <b>approve PO</b> · Gudang: input penerimaan barang · Viewer: hanya melihat. Modul Pengguna & Pengaturan hanya berlaku untuk role Admin.</div>
+    <div class="note">Admin (superuser): semua fungsi + <b>approve PO</b> + kelola user · Supervisor: kelola data, PO, pembayaran + <b>approve PO</b> · Gudang: penerimaan barang & DO · Finance: modul Pembayaran · Viewer: hanya melihat. Modul Pengguna & Pengaturan hanya berlaku untuk role Admin.</div>
     <label class="chk" style="margin-top:8px"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}> Akun aktif</label>`;
   }
 
   ERP.register('users', {
     async render(v) {
       let rows = await DB.list('app_users', { order: 'username' });
-      v.innerHTML = `<div class="toolbar">${ERP.searchBox('q', 'Cari username / nama…')}<div class="tb-actions">${btn('plus', 'Tambah user', 'id="b-add"', 'primary')}</div></div><div id="list"></div>`;
+      v.innerHTML = `<div class="toolbar">${ERP.searchBox('q', 'Cari username / nama…')}<div class="tb-actions">${btn('plus', 'Tambah user', 'id="b-add"', 'primary')}${btn('building', 'Kelola Divisi', 'id="b-div"')}</div></div><div id="list"></div>`;
       let q = '';
       const cols = [
         { label: 'Username', html: (u) => `<b>${esc(u.username)}</b>`, m: 'mt' }, { label: 'Nama', v: (u) => u.full_name },
         { label: 'Role', html: (u) => ERP.badge(ERP.ROLE_LABEL[u.role]) },
+        { label: 'Divisi', v: (u) => ERP.divCode(u) || '-' },
         { label: 'Modul', html: (u) => u.modules.map((m) => esc(ERP.MOD_LABEL[m])).join(', '), m: 'mf' },
         { label: 'Status', html: (u) => (u.active ? ERP.badge('Aktif', 'ok') : ERP.badge('Nonaktif', 'mut')) },
         { label: '', cls: 'act', html: (u) => btn('edit', 'Edit user', `data-id="${u.id}"`, 'sm') },
@@ -46,14 +48,35 @@
           if ((!u || d.pin) && !/^\d{4}$/.test(d.pin)) { ERP.toast('PIN harus 4 digit angka', 'err'); return; }
           if (u && u.id === ERP.user.id && (!d.active || d.role !== 'admin' || !modules.includes('users'))) { ERP.toast('Anda tidak dapat menonaktifkan / menurunkan akses akun sendiri', 'err'); return; }
           try {
-            if (u) await DB.adminUser('update', { id: u.id, full_name: d.full_name, role: d.role, modules, active: d.active, pin: d.pin || undefined });
-            else await DB.adminUser('create', { username: d.username.toLowerCase(), full_name: d.full_name, role: d.role, modules, pin: d.pin });
+            if (u) await DB.adminUser('update', { id: u.id, full_name: d.full_name, role: d.role, modules, active: d.active, pin: d.pin || undefined, division_id: d.division_id || null });
+            else await DB.adminUser('create', { username: d.username.toLowerCase(), full_name: d.full_name, role: d.role, modules, pin: d.pin, division_id: d.division_id || null });
             m.close(); ERP.toast('User disimpan'); rows = await DB.list('app_users', { order: 'username' }); draw();
           } catch (e) { ERP.toast(e.message, 'err'); }
         } }],
       });
       $('#b-add').onclick = () => open(null);
       $('#list').onclick = (e) => { const b = e.target.closest('[data-id]'); if (b) open(rows.find((x) => x.id === b.dataset.id)); };
+      // ---- kelola divisi: tambah / hapus ----
+      $('#b-div').onclick = () => {
+        const body = () => `<p class="note">Kode divisi dipakai pada nomor PO (mis. <b>MAIN</b> pada SSBI-DM-<b>MAIN</b>-202610005). Divisi yang masih dipakai user tidak bisa dihapus.</p>
+          ${ERP.table([{ label: 'Kode', html: (d) => `<b>${esc(d.code)}</b>`, m: 'mt' }, { label: 'Nama divisi', v: (d) => d.name }, { label: 'Jumlah user', v: (d) => rows.filter((u) => u.division_id === d.id).length, cls: 'n' }, { label: '', cls: 'act', html: (d) => btn('trash', 'Hapus divisi', `data-ddel="${d.id}"`, 'sm danger') }], ERP.divisions, { empty: 'Belum ada divisi.' })}
+          <div class="sec-t">Tambah divisi</div><div class="grid c2">${ERP.field('Kode (2–10 huruf/angka)', '<input name="code" maxlength="10" style="text-transform:uppercase" autocapitalize="characters">')}${ERP.field('Nama divisi', '<input name="name">')}</div>`;
+        const m = ERP.modal({ title: 'Kelola Divisi', wide: true, html: body(),
+          actions: [{ icon: 'plus', tip: 'Tambah divisi', cls: 'primary', onClick: async (mm) => {
+            const d = ERP.formData(mm.el); const code = String(d.code || '').toUpperCase();
+            if (!/^[A-Z0-9]{2,10}$/.test(code)) { ERP.toast('Kode 2–10 huruf/angka', 'err'); return; }
+            if (!d.name) { ERP.toast('Isi nama divisi', 'err'); return; }
+            if (ERP.divisions.some((x) => x.code === code)) { ERP.toast('Kode divisi sudah ada', 'err'); return; }
+            try { await DB.insert('divisions', { code, name: d.name }); ERP.divisions = await DB.list('divisions', { order: 'code' }); mm.q('.m-body').innerHTML = body(); ERP.toast('Divisi ditambahkan'); } catch (e) { ERP.toast(e.message, 'err'); }
+          } }] });
+        m.el.addEventListener('click', async (e) => {
+          const b = e.target.closest('[data-ddel]'); if (!b) return;
+          const d = ERP.divisions.find((x) => x.id === b.dataset.ddel);
+          if (rows.some((u) => u.division_id === d.id)) { ERP.toast('Divisi masih dipakai user, tidak bisa dihapus', 'err'); return; }
+          if (!(await ERP.confirm(`Hapus divisi <b>${esc(d.code)}</b>?`, { danger: true }))) return;
+          try { await DB.remove('divisions', d.id); ERP.divisions = await DB.list('divisions', { order: 'code' }); m.q('.m-body').innerHTML = body(); ERP.toast('Divisi dihapus'); } catch (err) { ERP.toast(err.message, 'err'); }
+        });
+      };
     },
   });
 
@@ -62,9 +85,9 @@
     const canApprove = DB.mode === 'local' || ['admin', 'supervisor'].includes(ERP.user.role);
     const D = (o) => ({ ...o, is_dummy: true });
     const sup = await DB.insert('suppliers', [
-      D({ name: 'PT Sumber Makmur (Contoh)', currency: 'IDR', contact_person: 'Budi Santoso', position: 'Sales Manager', mobile: '0812-0000-1111', office_phone: '021-5550001', email: 'budi@sumbermakmur.example', billing_address: 'Jl. Industri No. 1, Jakarta', npwp: '01.234.567.8-012.000', tax_payer: 'PT Sumber Makmur', nitku: '0123456789012340000000', tax_address: 'Jl. Industri No. 1, Jakarta' }),
-      D({ name: 'CV Karya Teknik (Contoh)', currency: 'IDR', contact_person: 'Siti Rahma', position: 'Marketing', mobile: '0813-0000-2222', office_phone: '031-5550002', email: 'siti@karyateknik.example', billing_address: 'Jl. Raya Darmo 22, Surabaya', npwp: '02.345.678.9-023.000', tax_payer: 'CV Karya Teknik', nitku: '0234567890123450000000', tax_address: 'Jl. Raya Darmo 22, Surabaya' }),
-      D({ name: 'Global Soles Ltd (Contoh)', currency: 'USD', contact_person: 'John Miller', position: 'Account Executive', mobile: '+1-555-0100', office_phone: '+1-555-0101', email: 'john@globalsoles.example', billing_address: '100 Industrial Ave, Singapore', npwp: '', tax_payer: '', nitku: '', tax_address: '' }),
+      D({ company_code: 'SM', name: 'PT Sumber Makmur (Contoh)', currency: 'IDR', contact_person: 'Budi Santoso', position: 'Sales Manager', mobile: '0812-0000-1111', office_phone: '021-5550001', email: 'budi@sumbermakmur.example', billing_address: 'Jl. Industri No. 1, Jakarta', npwp: '01.234.567.8-012.000', tax_payer: 'PT Sumber Makmur', nitku: '0123456789012340000000', tax_address: 'Jl. Industri No. 1, Jakarta' }),
+      D({ company_code: 'KT', name: 'CV Karya Teknik (Contoh)', currency: 'IDR', contact_person: 'Siti Rahma', position: 'Marketing', mobile: '0813-0000-2222', office_phone: '031-5550002', email: 'siti@karyateknik.example', billing_address: 'Jl. Raya Darmo 22, Surabaya', npwp: '02.345.678.9-023.000', tax_payer: 'CV Karya Teknik', nitku: '0234567890123450000000', tax_address: 'Jl. Raya Darmo 22, Surabaya' }),
+      D({ company_code: 'GS', name: 'Global Soles Ltd (Contoh)', currency: 'USD', contact_person: 'John Miller', position: 'Account Executive', mobile: '+1-555-0100', office_phone: '+1-555-0101', email: 'john@globalsoles.example', billing_address: '100 Industrial Ave, Singapore', npwp: '', tax_payer: '', nitku: '', tax_address: '' }),
     ]);
     const V = (brand, model, compound, gender, color, size, unit) => D({ brand, model, compound, gender, color, size, unit });
     const items = await DB.insert('items', [
@@ -91,21 +114,32 @@
       const cur = sup[sp.s].currency;
       const ls = sp.lines.map(([i, q, p]) => ({ it: items[i], qty: q, price: p }));
       const c = ERP.calcPO(ls, 'pct', sp.disc || 0, !!sp.vat, !!sp.pph, 2, cur);
-      const seq = await DB.nextPoSeq();
+      const seq = await DB.nextPoSeq(sup[sp.s].id, Number(sp.date.slice(0, 4)));
       const approved = canApprove && !sp.forcePending;
-      const [po] = await DB.insert('purchase_orders', D({ po_seq: seq, po_number: ERP.poNumber(seq, sp.date), po_date: sp.date, supplier_id: sup[sp.s].id, currency: cur, fx_rate: sp.fx || null, payment_type: sp.pay, tempo_mode: sp.pay === 'tempo' ? (sp.tdate ? 'date' : 'days') : null, tempo_days: sp.days || null, tempo_date: sp.tdate || null, vat: !!sp.vat, pph23: !!sp.pph, pph23_rate: sp.pph ? 2 : null, pph23_amount: c.pphAmt, urgent: !!sp.urgent, discount_type: 'pct', discount_value: sp.disc || 0, subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, total: c.total, status: 'pending', revision: 0, notes: 'Data contoh' }));
+      const [po] = await DB.insert('purchase_orders', D({ po_seq: seq, po_number: ERP.poNumber(seq, sp.date, sup[sp.s].company_code, ERP.divCode() || 'MAIN'), po_date: sp.date, est_date: ERP.addDays(sp.date, 14), supplier_id: sup[sp.s].id, currency: cur, fx_rate: sp.fx || null, payment_type: sp.pay, tempo_mode: sp.pay === 'tempo' ? (sp.tdate ? 'date' : 'days') : null, tempo_days: sp.days || null, tempo_date: sp.tdate || null, vat: !!sp.vat, pph23: !!sp.pph, pph23_rate: sp.pph ? 2 : null, pph23_amount: c.pphAmt, urgent: !!sp.urgent, discount_type: 'pct', discount_value: sp.disc || 0, subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, total: c.total, status: 'pending', revision: 0, notes: 'Data contoh' }));
       const lines = await DB.insert('po_items', ls.map((l, n) => ({ po_id: po.id, line_no: n + 1, item_id: l.it.id, brand: l.it.brand, model: l.it.model, compound: l.it.compound, gender: l.it.gender, color: l.it.color, size: l.it.size, unit: l.it.unit, qty: l.qty, price: l.price })));
       made.push({ po, lines });
       if (!approved) continue;
       await DB.update('purchase_orders', po.id, { status: 'approved', approved_by: ERP.user.id, approved_at: sp.date + 'T09:00:00Z' });
-      if (sp.inv) await DB.update('purchase_orders', po.id, { invoice_no: sp.inv[0], invoice_date: sp.inv[1], fp_no: sp.inv[2] || null });
+      const grRows = [];
       for (const [gd, sj, good, def] of sp.recv) {
         const [g] = await DB.insert('goods_receipts', { po_id: po.id, gr_date: gd, delivery_note_no: sj, received_by: 'Gudang Contoh' });
         const rows = [];
         lines.forEach((l, n) => { const d = (def || {})[n] || 0, gq = good === 1 ? l.qty - d : good[n] || 0; if (gq > 0) rows.push({ gr_id: g.id, po_item_id: l.id, qty: gq, grade: 'G' }); if (d > 0) rows.push({ gr_id: g.id, po_item_id: l.id, qty: d, grade: 'D' }); });
-        await DB.insert('gr_items', rows);
+        grRows.push(...(await DB.insert('gr_items', rows)));
       }
-      for (const [pd, f] of sp.paid) await DB.insert('po_payments', { po_id: po.id, pay_date: pd, amount: ERP.round(c.total * f, cur), note: 'Data contoh' });
+      // pembayaran lewat modul Pembayaran: payments + payment_items + po_payments
+      const fpNo = sp.inv ? sp.inv[2] : '';
+      for (const [pd, f] of sp.paid) {
+        const fac = Number(c.subtotal) > 0 ? c.total / c.subtotal : 1;
+        const pay = grRows.map((x) => ({ x, w: ERP.round(x.qty * lines.find((y) => y.id === x.po_item_id).price * fac, cur) }));
+        const base = ERP.sum(pay, (y) => y.w);
+        if (!(base > 0)) continue;
+        const amt = ERP.round(Math.min(ERP.round(c.total * f, cur), base), cur);
+        const [pm] = await DB.insert('payments', { supplier_id: sup[sp.s].id, currency: cur, fp_no: fpNo || null, pay_date: pd, amount: amt, bank: 'BCA (contoh)', note: 'Data contoh' });
+        await DB.insert('payment_items', pay.map((y) => ({ payment_id: pm.id, gr_item_id: y.x.id, po_id: po.id, amount: ERP.round((y.w * amt) / base, cur) })));
+        await DB.insert('po_payments', { po_id: po.id, payment_id: pm.id, pay_date: pd, amount: amt, note: 'Pembayaran' + (fpNo ? ' FP ' + fpNo : '') + ' · BCA (contoh)' });
+      }
     }
     if (canApprove) { // contoh Delivery Order terkait PO pertama (No DO diketik manual)
       const { po, lines } = made[0];
@@ -115,6 +149,8 @@
   }
   async function clearDummy() {
     for (const d of (await DB.list('delivery_orders')).filter((x) => x.is_dummy)) await DB.remove('delivery_orders', d.id);
+    const dsup = new Set((await DB.list('suppliers')).filter((x) => x.is_dummy).map((x) => x.id));
+    for (const pm of (await DB.list('payments')).filter((x) => dsup.has(x.supplier_id))) await DB.remove('payments', pm.id);
     for (const p of (await DB.list('purchase_orders')).filter((x) => x.is_dummy)) await DB.remove('purchase_orders', p.id);
     for (const i of (await DB.list('items')).filter((x) => x.is_dummy)) await DB.remove('items', i.id);
     for (const s of (await DB.list('suppliers')).filter((x) => x.is_dummy)) await DB.remove('suppliers', s.id);
@@ -129,7 +165,7 @@
       const dummyN = sups.filter((x) => x.is_dummy).length + items.filter((x) => x.is_dummy).length + pos.filter((x) => x.is_dummy).length;
       v.innerHTML = `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr));align-items:start">
         <div class="card"><div class="sec-t" style="margin-top:0">Data perusahaan (kop cetakan)</div><div id="co" class="grid c2">
-          ${F('Nama perusahaan', `<input name="name" value="${esc(co.name)}">`, 'full')}${F('Alamat', `<textarea name="address" rows="2">${esc(co.address)}</textarea>`, 'full')}
+          ${F('Nama perusahaan', `<input name="name" value="${esc(co.name)}">`)}${F('Kode perusahaan (awalan nomor PO)', `<input name="code" maxlength="8" style="text-transform:uppercase" value="${esc(co.code || 'SSBI')}">`)}${F('Alamat', `<textarea name="address" rows="2">${esc(co.address)}</textarea>`, 'full')}
           ${F('Telepon', `<input name="phone" value="${esc(co.phone)}">`)}${F('Email', `<input name="email" value="${esc(co.email)}">`)}${F('NPWP', `<input name="npwp" value="${esc(co.npwp)}">`, 'full')}</div>
           <div style="margin-top:10px;text-align:right">${btn('check', 'Simpan data perusahaan', 'id="co-save"', 'primary')}</div></div>
 
@@ -140,12 +176,15 @@
           <div class="grid c4" style="margin-top:8px">${F('Kode', '<input id="c-code" maxlength="5" placeholder="SGD">')}${F('Nama', '<input id="c-name" placeholder="Singapore Dollar">')}${F('Simbol', '<input id="c-sym" placeholder="S$">')}${F('Desimal', '<input id="c-dec" inputmode="numeric" value="2">')}</div>
           <div style="margin-top:8px;text-align:right">${btn('plus', 'Tambah mata uang', 'id="c-add"', 'primary')}</div></div>
 
+        <div class="card"><div class="sec-t" style="margin-top:0">Bank asal pembayaran</div><div id="banks"></div>
+          <div class="tempo-box" style="margin-top:8px"><input id="bk-new" placeholder="Nama bank / rekening (mis. BCA 123-456)" style="flex:1;width:auto">${btn('plus', 'Tambah bank', 'id="bk-add"', 'primary')}</div></div>
+
         <div class="card"><div class="sec-t" style="margin-top:0">Data contoh & pemeliharaan</div>
           <p class="note">Data contoh (3 supplier, 8 item sepatu, 2 client, 7 PO termasuk USD dan PPh 23, penerimaan Good/Defect, 1 Delivery Order) untuk mencoba semua fitur. Bisa dihapus kapan saja tanpa menyentuh data asli.${DB.mode === 'supabase' && ERP.user.role !== 'supervisor' ? ' Catatan: jika dimuat oleh Admin, PO contoh berstatus “Menunggu Approval” (Supervisor yang bisa approve).' : ''}</p>
           <div class="tb-actions">${btn('plus', 'Muat data contoh', 'id="d-load"', 'primary')}${btn('trash', `Hapus data contoh (${dummyN})`, 'id="d-clear"', 'danger')}${btn('trash', `Hapus riwayat import analisa (${hist.length})`, 'id="h-clear"', 'danger')}${btn('download', 'Unduh backup semua data (JSON)', 'id="d-backup"')}${DB.mode === 'local' ? btn('reset', 'Reset SEMUA data demo', 'id="d-reset"', 'danger') : ''}</div>
           <p class="note">Mode: <b>${DB.mode === 'local' ? 'DEMO (data di browser ini)' : DB.mode === 'api' ? 'Server lokal (data terpusat di PC server, backup harian otomatis)' : 'Supabase (data terpusat)'}</b></p></div></div>`;
 
-      $('#co-save').onclick = async () => { try { await ERP.setSetting('company', ERP.formData($('#co'))); await ERP.loadRef(); ERP.toast('Data perusahaan disimpan'); } catch (e) { ERP.toast(e.message, 'err'); } };
+      $('#co-save').onclick = async () => { try { const cd = ERP.formData($('#co')); cd.code = String(cd.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '') || 'SSBI'; await ERP.setSetting('company', cd); await ERP.loadRef(); ERP.toast('Data perusahaan disimpan'); } catch (e) { ERP.toast(e.message, 'err'); } };
 
       const drawUnits = () => {
         $('#units').innerHTML = ERP.table([{ label: 'Satuan', html: (u) => `<input value="${esc(u.name)}" data-uid="${u.id}" data-old="${esc(u.name)}" style="max-width:200px">`, m: 'mt' }, { label: '', cls: 'act', html: (u) => btn('trash', 'Hapus satuan', `data-udel="${u.id}"`, 'sm danger') }], units);
@@ -184,6 +223,10 @@
         try { await DB.insert('currencies', { code, name, symbol: $('#c-sym').value.trim(), decimals: Math.max(0, Math.min(4, parseInt($('#c-dec').value) || 0)) }); ERP.toast('Mata uang ditambahkan'); await ERP.loadRef(); ERP.refresh(); } catch (e) { ERP.toast(e.message, 'err'); }
       };
 
+      const drawBanks = async () => { const bl = await DB.list('banks', { order: 'name' }); ERP.banks = bl; $('#banks').innerHTML = ERP.table([{ label: 'Bank', v: (b) => b.name, m: 'mt' }, { label: '', cls: 'act', html: (b) => btn('trash', 'Hapus bank', `data-bdel="${b.id}"`, 'sm danger') }], bl, { empty: 'Belum ada bank. Tambahkan agar bisa dipilih di modul Pembayaran.' }); };
+      drawBanks();
+      $('#bk-add').onclick = async () => { const n = $('#bk-new').value.trim(); if (!n) return; if (ERP.banks.some((b) => norm(b.name) === norm(n))) { ERP.toast('Bank sudah ada', 'err'); return; } try { await DB.insert('banks', { name: n }); $('#bk-new').value = ''; drawBanks(); } catch (e) { ERP.toast(e.message, 'err'); } };
+      $('#banks').onclick = async (e) => { const b = e.target.closest('[data-bdel]'); if (!b) return; if (await ERP.confirm('Hapus bank ini dari daftar? Pembayaran lama tetap menyimpan nama banknya.', { danger: true })) { try { await DB.remove('banks', b.dataset.bdel); drawBanks(); } catch (err) { ERP.toast(err.message, 'err'); } } };
       $('#d-load').onclick = async () => { if (!(await ERP.confirm('Muat data contoh (supplier, item, dan PO)?'))) return; try { await loadDummy(); ERP.toast('Data contoh dimuat'); ERP.refresh(); } catch (e) { ERP.toast('Gagal: ' + e.message, 'err'); } };
       $('#d-clear').onclick = async () => { if (!(await ERP.confirm('Hapus semua <b>data contoh</b>? Data asli tidak terpengaruh.', { danger: true }))) return; try { await clearDummy(); ERP.toast('Data contoh dihapus'); ERP.refresh(); } catch (e) { ERP.toast('Gagal: ' + e.message, 'err'); } };
       $('#h-clear').onclick = async () => { if (!hist.length || !(await ERP.confirm(`Hapus ${hist.length} baris riwayat import analisa?`, { danger: true }))) return; try { for (const h of hist) await DB.remove('hist_purchases', h.id); ERP.toast('Riwayat import dihapus'); ERP.refresh(); } catch (e) { ERP.toast(e.message, 'err'); } };

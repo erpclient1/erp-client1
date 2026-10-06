@@ -248,7 +248,7 @@
   ERP.attrText = (o) => [o.brand, o.model, o.compound, o.gender, o.color, o.size].filter(Boolean).join(' · ');
   ERP.itemKey = (o) => [o.brand, o.model, o.compound, o.gender, o.color, o.size].map((x) => String(x || '').trim().toLowerCase()).join('|');
   ERP.GENDERS = ['GS', 'Man', 'Woman', 'INF', 'PS', 'JR', 'KID'];
-  ERP.SIZES = ['3T', '4', '4T', '5', '5T', '6', '6T', '7', '7T', '8', '8T', '9', '9T', '10', '10T', '11', '11T', '12', '12T', '13', '13T', '14', '14T', '15'];
+  ERP.SIZES = ['1', '1T', '2', '2T', '3T', '4', '4T', '5', '5T', '6', '6T', '7', '7T', '8', '8T', '9', '9T', '10', '10T', '11', '11T', '12', '12T', '13', '13T', '14', '14T', '15', '15T', '16', '16T', '17', '17T', '18', '18T', '19', '19T', '20', '20T'];
   ERP.norm = (s) => String(s == null ? '' : s).toLowerCase();
 
   /* ---------- Excel ---------- */
@@ -258,6 +258,17 @@
     ws['!cols'] = headers.map((h, i) => ({ wch: Math.min(40, Math.max(String(h).length + 2, ...rows.slice(0, 50).map((r) => String(r[i] == null ? '' : r[i]).length + 2))) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, sheet.slice(0, 30));
+    XLSX.writeFile(wb, filename);
+  };
+  // beberapa sheet dalam satu file: sheets = [{ name, headers, rows }]
+  ERP.xlsxExportMulti = (filename, sheets) => {
+    if (!window.XLSX) { ERP.toast('Library Excel belum termuat (cek koneksi internet).', 'err'); return; }
+    const wb = XLSX.utils.book_new();
+    sheets.forEach((sh) => {
+      const ws = XLSX.utils.aoa_to_sheet([sh.headers, ...sh.rows]);
+      ws['!cols'] = sh.headers.map((h, i) => ({ wch: Math.min(40, Math.max(String(h).length + 2, ...sh.rows.slice(0, 50).map((r) => String(r[i] == null ? '' : r[i]).length + 2))) }));
+      XLSX.utils.book_append_sheet(wb, ws, sh.name.slice(0, 30));
+    });
     XLSX.writeFile(wb, filename);
   };
   ERP.pickFile = (accept = '.xlsx,.xls,.csv') => new Promise((res) => {

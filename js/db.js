@@ -9,14 +9,15 @@
   /* ================= LOCAL ================= */
   const KEY = 'erp_local_db_v1';
   const SKEY = 'erp_local_session';
-  const TABLES = ['app_users', 'units', 'currencies', 'settings', 'suppliers', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'hist_purchases', 'clients', 'delivery_orders', 'do_items'];
-  const CASCADE = { purchase_orders: [['po_items', 'po_id'], ['po_payments', 'po_id'], ['goods_receipts', 'po_id']], goods_receipts: [['gr_items', 'gr_id']], po_items: [['gr_items', 'po_item_id']], delivery_orders: [['do_items', 'do_id']] };
-  const MODS_ALL = ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'report', 'stock', 'analysis', 'users', 'settings'];
+  const TABLES = ['app_users', 'units', 'currencies', 'settings', 'suppliers', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'hist_purchases', 'clients', 'delivery_orders', 'do_items', 'divisions', 'banks', 'payments', 'payment_items'];
+  const CASCADE = { purchase_orders: [['po_items', 'po_id'], ['po_payments', 'po_id'], ['goods_receipts', 'po_id']], goods_receipts: [['gr_items', 'gr_id']], po_items: [['gr_items', 'po_item_id']], delivery_orders: [['do_items', 'do_id']], payments: [['payment_items', 'payment_id'], ['po_payments', 'payment_id']] };
+  const MODS_ALL = ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis', 'users', 'settings'];
   ERP.ROLE_DEFAULT_MODS = {
     admin: MODS_ALL,
-    supervisor: ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'report', 'stock', 'analysis'],
+    supervisor: ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis'],
     gudang: ['items', 'po', 'gr', 'do', 'report', 'stock'],
-    viewer: ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'report', 'stock', 'analysis'],
+    finance: ['items', 'suppliers', 'po', 'gr', 'payment', 'report', 'stock'],
+    viewer: ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis'],
   };
   let store = null;
   const save = () => localStorage.setItem(KEY, JSON.stringify(store));
@@ -26,17 +27,20 @@
     mode: 'local',
     async init() {
       try { store = JSON.parse(localStorage.getItem(KEY)); } catch (_) { store = null; }
-      if (store && (store.v || 0) < 3) store = null; // struktur Master Item/PO berubah: data demo lama dibuang
+      if (store && (store.v || 0) < 4) store = null; // struktur Master Item/PO berubah: data demo lama dibuang
       if (!store) {
-        store = { v: 3, seq: { supplier: 0, item: 0, po: 0, client: 0 } };
+        store = { v: 4, seq: { supplier: 0, item: 0, po: 0, client: 0 } };
         TABLES.forEach((t) => (store[t] = []));
-        const mk = (username, full_name, role, modules, pin) => ({ id: uuid(), username, full_name, role, modules, active: true, pin, created_at: now() });
+        const divId = uuid();
+        store.divisions = [{ id: divId, code: 'MAIN', name: 'Main Office', created_at: now() }];
+        const mk = (username, full_name, role, modules, pin) => ({ id: uuid(), username, full_name, role, modules, active: true, pin, division_id: divId, created_at: now() });
         const R = ERP.ROLE_DEFAULT_MODS;
         store.app_users = [
           mk('admin', 'Admin Demo', 'admin', R.admin, '1111'),
           mk('spv', 'Supervisor Demo', 'supervisor', R.supervisor, '2222'),
           mk('gudang', 'Gudang Demo', 'gudang', R.gudang, '3333'),
           mk('viewer', 'Viewer Demo', 'viewer', R.viewer, '4444'),
+          mk('fin', 'Finance Demo', 'finance', R.finance, '5555'),
         ];
         store.units = ['PRS', 'KG'].map((name) => ({ id: uuid(), name }));
         store.currencies = [['IDR', 'Rupiah', 'Rp', 0], ['USD', 'US Dollar', '$', 2], ['EUR', 'Euro', '€', 2]].map(([code, name, symbol, decimals]) => ({ id: uuid(), code, name, symbol, decimals }));
@@ -57,6 +61,8 @@
         if (table === 'suppliers' && !row.code) row.code = 'SUP-' + String(++store.seq.supplier).padStart(4, '0');
         if (table === 'items' && !row.item_number) row.item_number = 'ITM-' + String(++store.seq.item).padStart(4, '0');
         if (table === 'clients' && !row.code) row.code = 'CL-' + String(++store.seq.client).padStart(4, '0');
+        if (table === 'divisions') row.code = String(row.code || '').toUpperCase();
+        if (table === 'payments') row.created_by = row.created_by || (ERP.user && ERP.user.id);
         if (table === 'delivery_orders') row.created_by = row.created_by || (ERP.user && ERP.user.id);
         if (table === 'gr_items') row.grade = row.grade || 'G';
         if (table === 'purchase_orders') { row.status = row.status || 'pending'; row.revision = row.revision || 0; row.created_by = row.created_by || (ERP.user && ERP.user.id); }
@@ -82,7 +88,8 @@
       save();
     },
     async removeBy(table, col, val) { store[table].filter((r) => r[col] === val).forEach((r) => this.remove(table, r.id)); },
-    async nextPoSeq() { store.seq.po += 1; save(); return store.seq.po; },
+    // nomor urut PO per supplier, mulai 001, reset hanya saat ganti tahun
+    async nextPoSeq(supplierId, year) { const k = 'po_' + supplierId + '_' + year; store.seq[k] = (store.seq[k] || 0) + 1; save(); return store.seq[k]; },
     async login(username, pin) {
       const u = store.app_users.find((x) => x.username.toLowerCase() === username.toLowerCase() && x.active);
       store.lock = store.lock || {};
@@ -105,10 +112,10 @@
     async adminUser(action, p) {
       if (action === 'create') {
         if (store.app_users.some((u) => u.username.toLowerCase() === p.username.toLowerCase())) throw new Error('Username sudah dipakai');
-        store.app_users.push({ id: uuid(), username: p.username, full_name: p.full_name, role: p.role, modules: p.modules, active: true, pin: p.pin, created_at: now() });
+        store.app_users.push({ id: uuid(), username: p.username, full_name: p.full_name, role: p.role, modules: p.modules, active: true, pin: p.pin, division_id: p.division_id || null, created_at: now() });
       } else if (action === 'update') {
         const u = store.app_users.find((x) => x.id === p.id);
-        Object.assign(u, { full_name: p.full_name, role: p.role, modules: p.modules, active: p.active });
+        Object.assign(u, { full_name: p.full_name, role: p.role, modules: p.modules, active: p.active, division_id: p.division_id || null });
         if (p.pin) u.pin = p.pin;
       }
       save();
@@ -152,7 +159,7 @@
     },
     async remove(table, id) { const { error } = await sb.from(table).delete().eq('id', id); if (error) throw new Error(error.message); },
     async removeBy(table, col, val) { const { error } = await sb.from(table).delete().eq(col, val); if (error) throw new Error(error.message); },
-    async nextPoSeq() { const { data, error } = await sb.rpc('next_po_seq'); if (error) throw new Error(error.message); return data; },
+    async nextPoSeq(supplierId, year) { const { data, error } = await sb.rpc('next_po_seq', { p_supplier: supplierId, p_year: year }); if (error) throw new Error(error.message); return data; },
     async login(username, pin) {
       let res;
       try {
@@ -205,7 +212,7 @@
     update(table, id, patch) { return this.call('update', { table, id, patch }); },
     remove(table, id) { return this.call('remove', { table, id }); },
     removeBy(table, col, val) { return this.call('removeBy', { table, col, val }); },
-    nextPoSeq() { return this.call('nextPoSeq'); },
+    nextPoSeq(supplierId, year) { return this.call('nextPoSeq', { supplier_id: supplierId, year }); },
     async login(username, pin) {
       const j = await this.call('login', { username, pin });
       this.token = j.token; try { localStorage.setItem(TKEY, j.token); } catch (_) {}

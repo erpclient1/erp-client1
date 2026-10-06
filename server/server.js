@@ -23,8 +23,8 @@ db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;
   CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id TEXT NOT NULL, exp INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS secrets(user_id TEXT PRIMARY KEY, salt TEXT NOT NULL, hash TEXT NOT NULL, failed INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0);`);
 
-const TABLES = ['app_users', 'units', 'currencies', 'settings', 'suppliers', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'hist_purchases', 'clients', 'delivery_orders', 'do_items'];
-const CASCADE = { purchase_orders: [['po_items', 'po_id'], ['po_payments', 'po_id'], ['goods_receipts', 'po_id']], goods_receipts: [['gr_items', 'gr_id']], po_items: [['gr_items', 'po_item_id']], delivery_orders: [['do_items', 'do_id']] };
+const TABLES = ['app_users', 'units', 'currencies', 'settings', 'suppliers', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'hist_purchases', 'clients', 'delivery_orders', 'do_items', 'divisions', 'banks', 'payments', 'payment_items'];
+const CASCADE = { purchase_orders: [['po_items', 'po_id'], ['po_payments', 'po_id'], ['goods_receipts', 'po_id']], goods_receipts: [['gr_items', 'gr_id']], po_items: [['gr_items', 'po_item_id']], delivery_orders: [['do_items', 'do_id']], payments: [['payment_items', 'payment_id'], ['po_payments', 'payment_id']] };
 const store = Object.fromEntries(TABLES.map((t) => [t, []]));
 for (const r of db.prepare('SELECT tbl, json FROM docs').all()) if (store[r.tbl]) store[r.tbl].push(JSON.parse(r.json));
 
@@ -55,9 +55,10 @@ const fail = (status, error, extra) => Object.assign(new Error(error), { status,
 function seed() {
   if (!store.units.length) ['PRS', 'KG'].forEach((name) => { const r = { id: uuid(), name, created_at: now() }; store.units.push(r); put('units', r); });
   if (!store.currencies.length) [['IDR', 'Rupiah', 'Rp', 0], ['USD', 'US Dollar', '$', 2], ['EUR', 'Euro', '€', 2]].forEach(([code, name, symbol, decimals]) => { const r = { id: uuid(), code, name, symbol, decimals, created_at: now() }; store.currencies.push(r); put('currencies', r); });
+  if (!store.divisions.length) { const d = { id: uuid(), code: 'MAIN', name: 'Main Office', created_at: now() }; store.divisions.push(d); put('divisions', d); }
   if (!store.app_users.length) {
     const pin = String(crypto.randomInt(0, 10000)).padStart(4, '0');
-    createUser({ username: 'admin', full_name: 'Administrator', role: 'admin', modules: ALL_MODS.slice(), pin });
+    createUser({ username: 'admin', full_name: 'Administrator', role: 'admin', modules: ALL_MODS.slice(), pin, division_id: store.divisions[0].id });
     console.log('\n  ==============================================================');
     console.log('  AKUN ADMIN PERTAMA DIBUAT');
     console.log('     username : admin');
@@ -65,8 +66,8 @@ function seed() {
     console.log('  ==============================================================\n');
   }
 }
-const ALL_MODS = ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'report', 'stock', 'analysis', 'users', 'settings'];
-const ROLES = ['admin', 'supervisor', 'gudang', 'viewer'];
+const ALL_MODS = ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis', 'users', 'settings'];
+const ROLES = ['admin', 'supervisor', 'gudang', 'finance', 'viewer'];
 
 /* ---------------- PIN & sesi ---------------- */
 function setPin(userId, pin) {
@@ -81,7 +82,8 @@ function createUser(p) {
   if (!ROLES.includes(p.role)) throw fail(400, 'Role tidak valid');
   if (!Array.isArray(p.modules) || p.modules.some((m) => !ALL_MODS.includes(m))) throw fail(400, 'Modul tidak valid');
   if (store.app_users.some((u) => u.username.toLowerCase() === p.username.toLowerCase())) throw fail(400, 'Username sudah dipakai');
-  const u = { id: uuid(), username: p.username.toLowerCase(), full_name: p.full_name.trim(), role: p.role, modules: p.modules, active: true, created_at: now() };
+  if (p.division_id && !store.divisions.some((d) => d.id === p.division_id)) throw fail(400, 'Divisi tidak valid');
+  const u = { id: uuid(), username: p.username.toLowerCase(), full_name: p.full_name.trim(), role: p.role, modules: p.modules, division_id: p.division_id || null, active: true, created_at: now() };
   tx(() => { store.app_users.push(u); put('app_users', u); setPin(u.id, p.pin); });
   return u;
 }
@@ -116,18 +118,21 @@ const has = (u, m) => u.modules.includes(m);
 const any = (u, ms) => ms.some((m) => has(u, m));
 const canWrite = (u) => ['admin', 'supervisor'].includes(u.role);
 const canReceive = (u) => ['admin', 'supervisor', 'gudang'].includes(u.role);
-const PO_READ = ['po', 'gr', 'do', 'report', 'stock', 'analysis'];
+const canPay = (u) => ['admin', 'supervisor', 'finance'].includes(u.role) && has(u, 'payment');
+const PO_READ = ['po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis'];
 const READ = {
-  app_users: () => true, units: () => true, currencies: () => true, settings: () => true, suppliers: () => true, items: () => true,
-  clients: (u) => any(u, ['clients', 'do']), purchase_orders: (u) => any(u, PO_READ), po_items: (u) => any(u, PO_READ), po_payments: (u) => any(u, ['po', 'analysis']),
-  goods_receipts: (u) => any(u, ['po', 'gr', 'do', 'report', 'stock']), gr_items: (u) => any(u, ['po', 'gr', 'do', 'report', 'stock']),
+  app_users: () => true, units: () => true, currencies: () => true, settings: () => true, suppliers: () => true, items: () => true, divisions: () => true, banks: () => true,
+  payments: (u) => any(u, PO_READ), payment_items: (u) => any(u, PO_READ),
+  clients: (u) => any(u, ['clients', 'do']), purchase_orders: (u) => any(u, PO_READ), po_items: (u) => any(u, PO_READ), po_payments: (u) => any(u, ['po', 'payment', 'analysis']),
+  goods_receipts: (u) => any(u, ['po', 'gr', 'do', 'payment', 'report', 'stock']), gr_items: (u) => any(u, ['po', 'gr', 'do', 'payment', 'report', 'stock']),
   delivery_orders: (u) => any(u, ['do', 'report', 'stock']), do_items: (u) => any(u, ['do', 'report', 'stock']), hist_purchases: (u) => has(u, 'analysis'),
 };
 const WRITE = {
   app_users: () => false,
+  divisions: (u) => u.role === 'admin' && has(u, 'users'), banks: (u) => u.role === 'admin' && has(u, 'settings'), payments: (u) => canPay(u), payment_items: (u) => canPay(u),
   units: (u) => u.role === 'admin' && has(u, 'settings'), currencies: (u) => u.role === 'admin' && has(u, 'settings'), settings: (u) => u.role === 'admin' && has(u, 'settings'),
   suppliers: (u) => canWrite(u) && has(u, 'suppliers'), items: (u) => canWrite(u) && any(u, ['items', 'po']), clients: (u) => canWrite(u) && has(u, 'clients'),
-  purchase_orders: (u) => canWrite(u) && has(u, 'po'), po_items: (u) => canWrite(u) && has(u, 'po'), po_payments: (u) => canWrite(u) && has(u, 'po'),
+  purchase_orders: (u) => canWrite(u) && has(u, 'po'), po_items: (u) => canWrite(u) && has(u, 'po'), po_payments: (u, row) => (canWrite(u) && has(u, 'po')) || (canPay(u) && !!(row && row.payment_id)),
   goods_receipts: (u) => canReceive(u) && has(u, 'gr'), gr_items: (u) => canReceive(u) && has(u, 'gr'),
   delivery_orders: (u) => canReceive(u) && has(u, 'do'), do_items: (u) => canReceive(u) && has(u, 'do'), hist_purchases: (u) => canWrite(u) && has(u, 'analysis'),
 };
@@ -135,13 +140,13 @@ const DUMMY_DEL = ['purchase_orders', 'suppliers', 'items', 'clients', 'delivery
 function needRead(u, t) { if (!READ[t]) throw fail(400, 'Tabel tidak dikenal'); if (!READ[t](u)) throw fail(403, 'Tidak punya akses'); }
 function needWrite(u, t, row, isDelete) {
   if (!WRITE[t]) throw fail(400, 'Tabel tidak dikenal');
-  if (WRITE[t](u)) return;
+  if (WRITE[t](u, row)) return;
   if (isDelete && row && row.is_dummy && DUMMY_DEL.includes(t) && u.role === 'admin' && has(u, 'settings')) return;
   throw fail(403, 'Tidak punya akses');
 }
 
 /* ---------------- Aturan data ---------------- */
-const UNIQUE = { delivery_orders: ['do_number'], purchase_orders: ['po_number', 'po_seq'], suppliers: ['code'], clients: ['code'], items: ['item_number'], units: ['name'], currencies: ['code'] };
+const UNIQUE = { delivery_orders: ['do_number'], purchase_orders: ['po_number'], suppliers: ['code', 'company_code'], divisions: ['code'], banks: ['name'], clients: ['code'], items: ['item_number'], units: ['name'], currencies: ['code'] };
 const variantKey = (r) => ['brand', 'model', 'compound', 'gender', 'color', 'size', 'unit'].map((k) => String(r[k] || '').trim().toLowerCase()).join('|');
 function checkUnique(t, row) {
   for (const k of UNIQUE[t] || []) {
@@ -170,6 +175,8 @@ function restrictDelete(t, row) {
   if (t === 'suppliers') used('purchase_orders', 'supplier_id', 'Supplier dipakai di PO');
   if (t === 'clients') used('delivery_orders', 'client_id', 'Client dipakai di Delivery Order');
   if (t === 'purchase_orders') used('delivery_orders', 'po_id', 'PO dipakai di Delivery Order');
+  if (t === 'divisions') used('app_users', 'division_id', 'Divisi masih dipakai user');
+  if (t === 'suppliers') used('payments', 'supplier_id', 'Supplier dipakai di Pembayaran');
 }
 
 function removeRow(t, id) {
@@ -191,14 +198,17 @@ const ops = {
     return rows;
   },
   insert(u, b) {
-    const t = b.table; needWrite(u, t);
+    const t = b.table;
     const arr = Array.isArray(b.rows) ? b.rows : [b.rows];
     return tx(() => arr.map((r) => {
+      needWrite(u, t, r);
       const row = { ...clone(r), id: uuid(), created_at: now() };
       if (t === 'suppliers' && !row.code) row.code = 'SUP-' + String(nextSeq('supplier')).padStart(4, '0');
       if (t === 'clients' && !row.code) row.code = 'CL-' + String(nextSeq('client')).padStart(4, '0');
       if (t === 'items' && !row.item_number) row.item_number = 'ITM-' + String(nextSeq('item')).padStart(4, '0');
-      if (['po_payments', 'goods_receipts', 'delivery_orders'].includes(t)) row.created_by = u.id;
+      if (['po_payments', 'goods_receipts', 'delivery_orders', 'payments'].includes(t)) row.created_by = u.id;
+      if (t === 'divisions') row.code = String(row.code || '').toUpperCase();
+      if (t === 'suppliers' && row.company_code) row.company_code = String(row.company_code).toUpperCase();
       if (t === 'gr_items' || t === 'do_items') row.grade = row.grade === 'D' ? 'D' : 'G';
       if (t === 'purchase_orders') guardPO(null, row, u);
       if (t === 'po_items') resetPOIfItemsChanged(row.po_id);
@@ -208,9 +218,10 @@ const ops = {
     }));
   },
   update(u, b) {
-    const t = b.table; needWrite(u, t);
-    const old = store[t].find((r) => r.id === b.id);
+    const t = b.table;
+    const old = store[t] && store[t].find((r) => r.id === b.id);
     if (!old) throw fail(404, 'Data tidak ditemukan');
+    needWrite(u, t, old);
     return tx(() => {
       const row = { ...old, ...clone(b.patch || {}), id: old.id, created_at: old.created_at, updated_at: now() };
       if (t === 'purchase_orders') { row.po_seq = old.po_seq; row.created_by = old.created_by; guardPO(old, row, u); }
@@ -232,7 +243,8 @@ const ops = {
     tx(() => store[t].filter((r) => r[b.col] === b.val).forEach((r) => removeRow(t, r.id)));
     return null;
   },
-  nextPoSeq(u) { if (!(canWrite(u) && has(u, 'po'))) throw fail(403, 'Tidak punya akses'); return nextSeq('po'); },
+  // nomor urut PO per supplier, mulai 1, reset hanya saat ganti tahun
+  nextPoSeq(u, b) { if (!(canWrite(u) && has(u, 'po'))) throw fail(403, 'Tidak punya akses'); if (!b.supplier_id || !b.year) throw fail(400, 'Supplier/tahun wajib'); return nextSeq('po_' + b.supplier_id + '_' + b.year); },
   adminUser(u, b) {
     if (!(u.role === 'admin' && has(u, 'users'))) throw fail(403, 'Hanya Admin yang boleh mengelola user');
     if (b.action === 'create') { createUser(b); return null; }
@@ -243,7 +255,8 @@ const ops = {
       if (!String(b.full_name || '').trim()) throw fail(400, 'Nama lengkap wajib diisi');
       if (b.id === u.id && (!b.active || b.role !== 'admin' || !b.modules.includes('users'))) throw fail(400, 'Tidak dapat menonaktifkan / menurunkan akses akun sendiri');
       if (b.pin && !/^\d{4}$/.test(String(b.pin))) throw fail(400, 'PIN harus 4 digit angka');
-      tx(() => { Object.assign(t, { full_name: b.full_name.trim(), role: b.role, modules: b.modules, active: !!b.active, updated_at: now() }); put('app_users', t); if (b.pin) setPin(t.id, b.pin); });
+      if (b.division_id && !store.divisions.some((d) => d.id === b.division_id)) throw fail(400, 'Divisi tidak valid');
+      tx(() => { Object.assign(t, { full_name: b.full_name.trim(), role: b.role, modules: b.modules, division_id: b.division_id || null, active: !!b.active, updated_at: now() }); put('app_users', t); if (b.pin) setPin(t.id, b.pin); });
       return null;
     }
     throw fail(400, 'Aksi tidak dikenal');

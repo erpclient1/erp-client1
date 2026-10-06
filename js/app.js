@@ -9,10 +9,10 @@
   ERP.register = (id, def) => (ERP.modules[id] = def);
   const NAV = [
     ['items', 'Master Item', 'box'], ['suppliers', 'Supplier', 'building'], ['clients', 'Client', 'user'], ['po', 'Purchase Order', 'cart'],
-    ['gr', 'Goods Received', 'truck'], ['do', 'Delivery Order', 'send'], ['report', 'Report', 'list'], ['stock', 'Stock', 'layers'],
+    ['gr', 'Goods Received', 'truck'], ['do', 'Delivery Order', 'send'], ['payment', 'Pembayaran', 'wallet'], ['report', 'Report', 'list'], ['stock', 'Stock', 'layers'],
     ['analysis', 'Analisa', 'chart'], ['users', 'Pengguna', 'users'], ['settings', 'Pengaturan', 'gear'],
   ];
-  const ROLE_LABEL = { admin: 'Admin', supervisor: 'Supervisor', gudang: 'Gudang', viewer: 'Viewer' };
+  const ROLE_LABEL = { admin: 'Admin', supervisor: 'Supervisor', gudang: 'Gudang', finance: 'Finance', viewer: 'Viewer' };
   ERP.ROLE_LABEL = ROLE_LABEL;
   ERP.MOD_LABEL = Object.fromEntries(NAV.map((n) => [n[0], n[1]]));
 
@@ -22,6 +22,7 @@
     write: () => !!ERP.user && ['admin', 'supervisor'].includes(ERP.user.role),
     receive: () => !!ERP.user && ['admin', 'supervisor', 'gudang'].includes(ERP.user.role),
     approve: () => !!ERP.user && ['admin', 'supervisor'].includes(ERP.user.role),
+    pay: () => !!ERP.user && ['admin', 'supervisor', 'finance'].includes(ERP.user.role) && ERP.user.modules.includes('payment'),
   };
 
   /* ---------- Tema ---------- */
@@ -38,11 +39,13 @@
 
   /* ---------- Data acuan ---------- */
   ERP.loadRef = async () => {
-    const [units, currencies, settings] = await Promise.all([DB.list('units', { order: 'name' }), DB.list('currencies', { order: 'code' }), DB.list('settings')]);
-    ERP.units = units; ERP.currencies = currencies;
+    const [units, currencies, settings, divisions, banks] = await Promise.all([DB.list('units', { order: 'name' }), DB.list('currencies', { order: 'code' }), DB.list('settings'), DB.list('divisions', { order: 'code' }), DB.list('banks', { order: 'name' })]);
+    ERP.units = units; ERP.currencies = currencies; ERP.divisions = divisions; ERP.banks = banks;
     ERP.curMap = Object.fromEntries(currencies.map((c) => [c.code, c]));
     const co = settings.find((s) => s.key === 'company');
     ERP.company = co ? co.value : {};
+    ERP.coCode = () => String((ERP.company && ERP.company.code) || 'SSBI').toUpperCase();
+    ERP.divCode = (u) => { const d = ERP.divisions.find((x) => x.id === (u || ERP.user || {}).division_id); return d ? d.code : ''; };
   };
   ERP.setSetting = async (key, value) => {
     const cur = (await DB.list('settings')).find((s) => s.key === key);
@@ -51,11 +54,14 @@
 
   /* ---------- Loader PO + turunan (dipakai PO, GR, DO, Report, Stock, Analisa) ---------- */
   ERP.loadPO = async () => {
-    const [pos, lines, pays, grs, gri, sups, users, items, dos, doi, clients] = await Promise.all([
+    const [pos, lines, pays, grs, gri, sups, users, items, dos, doi, clients, pmts, pmi] = await Promise.all([
       DB.list('purchase_orders', { order: 'po_seq', desc: true }), DB.list('po_items', { order: 'line_no' }), DB.list('po_payments', { order: 'pay_date' }),
       DB.list('goods_receipts', { order: 'gr_date' }), DB.list('gr_items'), DB.list('suppliers', { order: 'name' }), DB.list('app_users'), DB.list('items', { order: 'brand' }),
-      DB.list('delivery_orders', { order: 'do_date' }), DB.list('do_items'), DB.list('clients', { order: 'name' }),
+      DB.list('delivery_orders', { order: 'do_date' }), DB.list('do_items'), DB.list('clients', { order: 'name' }), DB.list('payments', { order: 'pay_date' }), DB.list('payment_items'),
     ]);
+    const pmtMap = Object.fromEntries(pmts.map((x) => [x.id, x]));
+    const paidByGr = {}, fpByPo = {};
+    pmi.forEach((x) => { paidByGr[x.gr_item_id] = (paidByGr[x.gr_item_id] || 0) + Number(x.amount); const f = (pmtMap[x.payment_id] || {}).fp_no; if (f) (fpByPo[x.po_id] = fpByPo[x.po_id] || new Set()).add(f); });
     const supMap = Object.fromEntries(sups.map((s) => [s.id, s])), userMap = Object.fromEntries(users.map((u) => [u.id, u])), cliMap = Object.fromEntries(clients.map((c) => [c.id, c]));
     const group = (arr, k) => arr.reduce((m, x) => ((m[x[k]] = m[x[k]] || []).push(x), m), {});
     const L = group(lines, 'po_id'), P = group(pays, 'po_id'), G = group(grs, 'po_id'), GI = group(gri, 'gr_id'), DOs = group(dos, 'po_id'), DI = group(doi, 'do_id');
@@ -67,6 +73,7 @@
       p.payments = P[p.id] || [];
       p.receipts = (G[p.id] || []).map((g) => ({ ...g, items: GI[g.id] || [] }));
       p.dos = DOs[p.id] || [];
+      p.fpNos = [...(fpByPo[p.id] || [])];
       const rc = {}, ou = {}, lastG = {};
       p.receipts.forEach((g) => g.items.forEach((i) => { add(rc, i.po_item_id, i.grade, i.qty); lastG[i.po_item_id + '|' + (i.grade === 'D' ? 'D' : 'G')] = g.gr_date; }));
       p.dos.forEach((d) => d.items.forEach((i) => add(ou, i.po_item_id, i.grade, i.qty)));
@@ -83,7 +90,7 @@
       if (p.fullyPaid) { let acc = 0; for (const x of p.payments) { acc += Number(x.amount); if (acc >= Number(p.total) - 0.005) { p.paidDate = x.pay_date; break; } } }
       p.lastRecvDate = p.receipts.length ? p.receipts[p.receipts.length - 1].gr_date : null;
     });
-    return { pos, sups, items, users, supMap, userMap, dos, clients, cliMap };
+    return { pos, sups, items, users, supMap, userMap, dos, clients, cliMap, payments: pmts, payItems: pmi, paidByGr, pmtMap };
   };
 
   /* ---------- Login ---------- */

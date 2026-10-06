@@ -15,6 +15,20 @@
       <div class="sign"><div><div class="line"></div>Diterima oleh<br><b>${esc(g.received_by)}</b></div><div><div class="line"></div>Pengirim</div></div>`);
   }
 
+  // Export Excel tanpa harga: sheet Penerimaan (per baris diterima) + sheet Sisa Pesanan (per baris PO)
+  function exportGR(list, filename) {
+    const rec = [], rest = [];
+    list.forEach((p) => {
+      p.receipts.forEach((g) => g.items.forEach((x) => { const it = p.items.find((i) => i.id === x.po_item_id) || {}; rec.push([fmtDate(g.gr_date), g.delivery_note_no, g.received_by, p.po_number, p.supplier.name, it.brand, it.model, it.compound || '', it.gender || '', it.color || '', it.size || '', x.grade === 'D' ? 'D' : 'G', Number(x.qty), it.unit]); }));
+      p.items.forEach((i) => { const r = p.rc[i.id] || { G: 0, D: 0 }; rest.push([p.po_number, p.supplier.name, fmtDate(p.est_date), i.brand, i.model, i.compound || '', i.gender || '', i.color || '', i.size || '', Number(i.qty), r.G, r.D, Math.max(0, Number(i.qty) - r.G - r.D), i.unit]); });
+    });
+    if (!rec.length && !rest.length) { ERP.toast('Tidak ada data untuk diexport', 'err'); return; }
+    ERP.xlsxExportMulti(filename, [
+      { name: 'Penerimaan', headers: ['Tanggal Terima', 'No Surat Jalan', 'Diterima oleh', 'No PO', 'Supplier', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'G/D', 'Qty', 'Satuan'], rows: rec },
+      { name: 'Sisa Pesanan', headers: ['No PO', 'Supplier', 'Est Date', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'Qty PO', 'Diterima Good', 'Diterima Defect', 'Sisa', 'Satuan'], rows: rest },
+    ]);
+  }
+
   function receiveModal(p) {
     const remain = p.items.map((i) => ({ ...i, got: p.recv[i.id] || 0, left: Math.max(0, Number(i.qty) - (p.recv[i.id] || 0)) })).filter((i) => i.left > 0);
     const rowsHTML = remain.map((i) => `<tr data-id="${i.id}"><td data-label="Brand" class="mt"><b>${esc(i.brand)}</b></td><td data-label="Model">${esc(i.model)}</td><td data-label="Compound">${esc(i.compound)}</td><td data-label="Gender">${esc(i.gender)}</td><td data-label="Color">${esc(i.color)}</td><td data-label="Size">${esc(i.size)}</td>
@@ -56,7 +70,7 @@
       const canR = ERP.can.receive();
       const approved = data.pos.filter((p) => p.status === 'approved');
       const match = (p) => !S.q || norm(p.po_number).includes(S.q) || norm(p.supplier.name).includes(S.q) || p.items.some((i) => norm(ERP.attrText(i)).includes(S.q));
-      v.innerHTML = `<div class="toolbar">${ERP.searchBox('q', 'Cari nama supplier / brand / model / compound / color / size / no PO…')}<div class="tb-actions">${btn('print', 'Print daftar', 'id="b-prt"')}</div></div><div class="tabs" id="tabs"></div><div id="list"></div>`;
+      v.innerHTML = `<div class="toolbar">${ERP.searchBox('q', 'Cari nama supplier / brand / model / compound / color / size / no PO…')}<div class="tb-actions">${btn('download', 'Export Excel (tanpa harga)', 'id="b-exp"')}${btn('print', 'Print daftar', 'id="b-prt"')}</div></div><div class="tabs" id="tabs"></div><div id="list"></div>`;
       $('#q').value = S.q;
       let cur = [];
       const bar = (a, b) => `<div class="bar ${a >= b ? 'ok' : ''}"><i style="width:${b > 0 ? Math.min(100, (a / b) * 100) : 0}%"></i></div>`;
@@ -67,7 +81,7 @@
         { label: 'Supplier', v: (p) => p.supplier.name },
         { label: 'Item', v: itemsTxt, cls: 'hide-md', m: 'mf' },
         { label: 'Diterima', html: (p) => `${qty(p.received)} / ${qty(p.ordered)}${bar(p.received, p.ordered)}`, cls: 'nw' },
-        { label: '', cls: 'act', html: (p) => (p.receipts.length ? btn('eye', 'Riwayat penerimaan', `data-a="hist" data-id="${p.id}"`, 'sm') : '') + (canR ? btn('truck', 'Barang Diterima', `data-a="recv" data-id="${p.id}"`, 'sm primary') : '') },
+        { label: '', cls: 'act', html: (p) => btn('download', 'Export Excel PO ini', `data-a="xls" data-id="${p.id}"`, 'sm') + (p.receipts.length ? btn('eye', 'Riwayat penerimaan', `data-a="hist" data-id="${p.id}"`, 'sm') : '') + (canR ? btn('truck', 'Barang Diterima', `data-a="recv" data-id="${p.id}"`, 'sm primary') : '') },
       ];
       const finalCols = [
         { label: 'No PO', html: (p) => `<b>${esc(p.po_number)}</b>`, cls: 'nw', m: 'mt' },
@@ -77,7 +91,7 @@
         { label: 'Diterima oleh', v: (p) => [...new Set(p.receipts.map((g) => g.received_by))].join(', ') },
         { label: 'Good / Defect', v: (p) => { let g = 0, d = 0; Object.values(p.rc).forEach((r) => { g += r.G; d += r.D; }); return qty(g) + ' / ' + qty(d); }, cls: 'nw' },
         { label: 'Item', v: itemsTxt, cls: 'hide-md', m: 'mf' },
-        { label: '', cls: 'act', html: (p) => btn('eye', 'Lihat penerimaan', `data-a="hist" data-id="${p.id}"`, 'sm') },
+        { label: '', cls: 'act', html: (p) => btn('download', 'Export Excel PO ini', `data-a="xls" data-id="${p.id}"`, 'sm') + btn('eye', 'Lihat penerimaan', `data-a="hist" data-id="${p.id}"`, 'sm') },
       ];
       const draw = () => {
         const base = approved.filter(match);
@@ -90,13 +104,15 @@
       draw();
       $('#q').oninput = ERP.debounce((e) => { S.q = norm(e.target.value.trim()); draw(); });
       $('#tabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { S.tab = b.dataset.t; draw(); } };
+      $('#b-exp').onclick = () => exportGR(cur, 'GoodsReceived_' + ERP.today() + '.xlsx');
       $('#b-prt').onclick = () => (S.tab === 'wait'
         ? ERP.printTable('PO Menunggu Penerimaan Barang', [{ label: 'No PO', v: (p) => p.po_number }, { label: 'Tanggal', v: (p) => fmtDate(p.po_date) }, { label: 'Supplier', v: (p) => p.supplier.name }, { label: 'Item', v: itemsTxt }, { label: 'Diterima', v: (p) => qty(p.received) + '/' + qty(p.ordered) }], cur)
         : ERP.printTable('Daftar Barang Penerimaan Final', finalCols.slice(0, 6).map((c) => ({ label: c.label, v: c.v || ((p) => p.po_number) })), cur));
       $('#list').onclick = (e) => {
         const b = e.target.closest('[data-a]'); if (!b) return;
         const p = data.pos.find((x) => x.id === b.dataset.id);
-        if (b.dataset.a === 'recv') receiveModal(p);
+        if (b.dataset.a === 'xls') exportGR([p], 'GoodsReceived_' + p.po_number + '.xlsx');
+        else if (b.dataset.a === 'recv') receiveModal(p);
         else {
           const m = ERP.modal({
             title: 'Penerimaan — ' + esc(p.po_number), wide: true,

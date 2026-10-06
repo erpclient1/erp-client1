@@ -7,7 +7,8 @@
   const qty = (n) => ERP.fmtNum(n, Number.isInteger(+n) ? 0 : 2);
   const STAGES = [['active', 'PO Aktif'], ['received', 'Barang Diterima Semua'], ['done', 'PO Selesai']];
 
-  ERP.poNumber = (seq, date) => `PO ${String(seq).padStart(3, '0')} / ${ERP.romanMonth(date)} / ${date.slice(0, 4)}`;
+  // SSBI-DM-MAIN-202610005 : kode perusahaan - kode supplier - kode divisi - tahun+bulan+urut (urut per supplier, reset tiap ganti tahun)
+  ERP.poNumber = (seq, date, supCode, divCode) => `${ERP.coCode()}-${supCode}-${divCode}-${date.slice(0, 4)}${date.slice(5, 7)}${String(seq).padStart(3, '0')}`;
   ERP.termText = (p) => p.payment_type === 'tempo' ? (p.tempo_mode === 'date' ? 'Tempo s/d ' + fmtDate(p.tempo_date) : `Tempo ${p.tempo_days} hari`) : 'Cash';
   ERP.approvalBadge = (p) => p.status === 'approved' ? ERP.badge('Approved', 'ok') : ERP.badge('Menunggu Approval' + (p.revision > 0 ? ' (rev ' + p.revision + ')' : ''), 'warn');
   const fxOf = (p) => (p.fx_rate > 0 && p.currency !== 'IDR' ? Number(p.fx_rate) : 0);
@@ -40,7 +41,7 @@
       ${p.urgent ? '<div class="urgent">URGENT — PO MENDESAK</div>' : ''}
       ${p.status !== 'approved' ? '<div class="wm">BELUM DISETUJUI SUPERVISOR — DRAFT</div>' : ''}
       <div class="grid2"><div class="box"><b>Kepada:</b><br><b>${esc(s.name)}</b><br>${esc(s.contact_person || '')}${s.position ? ' (' + esc(s.position) + ')' : ''}<br>${esc(s.billing_address || '')}<br>${esc([s.mobile, s.office_phone].filter(Boolean).join(' / '))}<br>${esc(s.email || '')}</div>
-      <div class="box"><table class="kv"><tr><td>No PO</td><td><b>${esc(p.po_number)}</b></td></tr><tr><td>Tanggal</td><td>${fmtDate(p.po_date)}</td></tr><tr><td>Mata uang</td><td>${esc(cur)}${fx ? ' · Rate ' + ERP.fmtNum(fx, 2) + ' IDR' : ''}</td></tr><tr><td>Pembayaran</td><td>${esc(ERP.termText(p))}</td></tr></table></div></div>
+      <div class="box"><table class="kv"><tr><td>No PO</td><td><b>${esc(p.po_number)}</b></td></tr><tr><td>Tanggal</td><td>${fmtDate(p.po_date)}</td></tr><tr><td>Est Date (kedatangan)</td><td>${fmtDate(p.est_date)}</td></tr><tr><td>Mata uang</td><td>${esc(cur)}${fx ? ' · Rate ' + ERP.fmtNum(fx, 2) + ' IDR' : ''}</td></tr><tr><td>Pembayaran</td><td>${esc(ERP.termText(p))}</td></tr></table></div></div>
       <table><thead><tr><th class="center">No</th><th>Brand</th><th>Model</th><th>Compound</th><th>Gender</th><th>Color</th><th>Size</th><th class="n">Qty</th><th>Satuan</th><th class="n">Harga (${esc(cur)})</th>${fx ? '<th class="n">Harga (IDR)</th>' : ''}<th class="n">Jumlah (${esc(cur)})</th>${fx ? '<th class="n">Jumlah (IDR)</th>' : ''}</tr></thead><tbody>${rows}</tbody></table>
       <table class="tot" style="width:${fx ? 70 : 50}%;margin-left:auto">
         ${fx ? `<tr><td></td><td class="n muted">${esc(cur)}</td><td class="n muted">IDR</td></tr>` : ''}
@@ -62,37 +63,6 @@
     try { await DB.update('purchase_orders', p.id, { status: 'approved', approved_by: ERP.user.id, approved_at: new Date().toISOString() }); ERP.toast('PO disetujui'); ERP.refresh(); }
     catch (e) { ERP.toast(e.message, 'err'); }
   }
-  function invoiceModal(p) {
-    ERP.modal({
-      title: 'Invoice & Faktur Pajak Supplier — ' + esc(p.po_number),
-      html: `<div class="grid c2">${ERP.field('No Invoice', `<input name="invoice_no" value="${esc(p.invoice_no)}">`)}${ERP.field('Tanggal Invoice', ERP.dateInput('invoice_date', p.invoice_date))}${ERP.field('No FP (Faktur Pajak)', `<input name="fp_no" value="${esc(p.fp_no)}">`, 'full')}</div>`,
-      actions: [{ icon: 'check', tip: 'Simpan', cls: 'primary', onClick: async (m) => {
-        const d = ERP.formData(m.el);
-        try { await DB.update('purchase_orders', p.id, { invoice_no: d.invoice_no || null, invoice_date: d.invoice_date || null, fp_no: d.fp_no || null }); m.close(); ERP.toast('Tersimpan'); ERP.refresh(); } catch (e) { ERP.toast(e.message, 'err'); }
-      } }],
-    });
-  }
-  function payModal(p) {
-    const left = ERP.round(p.total - p.paid, p.currency);
-    const m = ERP.modal({
-      title: 'Pembayaran — ' + esc(p.po_number), wide: true,
-      html: `<div class="kv" style="margin-bottom:10px"><dt>Total dibayar (PO)</dt><dd><b>${fmtMoney(p.total, p.currency)}</b></dd><dt>Sudah dibayar</dt><dd>${fmtMoney(p.paid, p.currency)}</dd><dt>Sisa</dt><dd><b>${fmtMoney(left, p.currency)}</b></dd></div>
-      ${p.payments.length ? `<div class="sec-t">Riwayat pembayaran</div>${ERP.table([{ label: 'Tanggal', v: (x) => fmtDate(x.pay_date) }, { label: 'Jumlah', html: (x) => fmtMoney(x.amount, p.currency), cls: 'n' }, { label: 'Catatan', v: (x) => x.note || '' }, { label: '', cls: 'act', html: (x) => btn('trash', 'Hapus pembayaran', `data-del="${x.id}"`, 'sm danger') }], p.payments)}` : ''}
-      ${left > 0.005 ? `<div class="sec-t">Tambah pembayaran</div><div class="grid c3">${ERP.field('Tanggal bayar', ERP.dateInput('pay_date', ERP.today()))}${ERP.field('Jumlah (' + p.currency + ')', `<input name="amount" inputmode="decimal" value="${left}">`)}${ERP.field('Catatan', '<input name="note">')}</div>` : '<div class="note">PO ini sudah lunas.</div>'}`,
-      actions: left > 0.005 ? [{ icon: 'check', tip: 'Simpan pembayaran', cls: 'primary', onClick: async (mm) => {
-        const d = ERP.formData(mm.el); const amt = ERP.num(d.amount);
-        if (!d.pay_date) { ERP.toast('Tanggal bayar wajib diisi', 'err'); return; }
-        if (amt <= 0) { ERP.toast('Jumlah harus lebih dari 0', 'err'); return; }
-        if (amt > left + 0.005) { ERP.toast('Jumlah melebihi sisa tagihan', 'err'); return; }
-        try { await DB.insert('po_payments', { po_id: p.id, pay_date: d.pay_date, amount: amt, note: d.note || null }); mm.close(); ERP.toast('Pembayaran dicatat'); ERP.refresh(); } catch (e) { ERP.toast(e.message, 'err'); }
-      } }] : [],
-    });
-    m.el.addEventListener('click', async (e) => {
-      const b = e.target.closest('[data-del]'); if (!b) return;
-      if (!(await ERP.confirm('Hapus catatan pembayaran ini?', { danger: true }))) return;
-      try { await DB.remove('po_payments', b.dataset.del); m.close(); ERP.toast('Pembayaran dihapus'); ERP.refresh(); } catch (err) { ERP.toast(err.message, 'err'); }
-    });
-  }
   function detailModal(p, data) {
     const um = data.userMap, cur = p.currency, fx = fxOf(p), dec = ERP.decimals(cur);
     const c = calcOf(p), M = (n) => fmtMoney(n, cur), I = (n) => (fx ? ` <small>≈ ${idr(n, fx)}</small>` : '');
@@ -104,26 +74,40 @@
       { label: 'Jumlah', html: (i) => ERP.fmtNum(i.qty * i.price, dec) + (fx ? `<small>${ERP.fmtNum(i.qty * i.price * fx, 0)} IDR</small>` : ''), cls: 'n' },
     ], p.items);
     const rcv = p.receipts.length ? ERP.table([{ label: 'Tanggal', v: (g) => fmtDate(g.gr_date) }, { label: 'No Surat Jalan', v: (g) => g.delivery_note_no }, { label: 'Diterima oleh', v: (g) => g.received_by }, { label: 'Item', v: (g) => g.items.map((x) => { const it = p.items.find((i) => i.id === x.po_item_id); return (it ? ERP.attrText(it) : '?') + ' ' + (x.grade === 'D' ? 'D' : 'G') + '×' + qty(x.qty); }).join('; '), m: 'mf' }], p.receipts) : '<div class="note">Belum ada penerimaan.</div>';
+    const pays = p.payments.length ? ERP.table([{ label: 'Tanggal', v: (x) => fmtDate(x.pay_date) }, { label: 'Jumlah', html: (x) => fmtMoney(x.amount, cur), cls: 'n' }, { label: 'Catatan', v: (x) => x.note || '' }], p.payments) : '<div class="note">Belum ada pembayaran. Pembayaran diinput Finance di modul Pembayaran.</div>';
     const m = ERP.modal({
       title: esc(p.po_number) + (p.urgent ? ' <span class="urgent-tag">URGENT</span>' : ''), wide: true,
       html: `<dl class="kv"><dt>Tanggal</dt><dd>${fmtDate(p.po_date)}</dd><dt>Supplier</dt><dd>${esc(p.supplier.name)}</dd><dt>Pembayaran</dt><dd>${esc(ERP.termText(p))}</dd>
         ${fx ? `<dt>Rate</dt><dd>1 ${esc(cur)} = IDR ${ERP.fmtNum(fx, 2)}</dd>` : ''}
         <dt>Status</dt><dd>${ERP.approvalBadge(p)} ${p.approved_by && um[p.approved_by] ? '<small>oleh ' + esc(um[p.approved_by].full_name) + ', ' + ERP.fmtDate((p.approved_at || '').slice(0, 10)) + '</small>' : ''}</dd>
         <dt>Dibuat oleh</dt><dd>${esc((um[p.created_by] || {}).full_name || '-')}</dd>
-        <dt>Invoice / FP</dt><dd>${p.invoice_no ? esc(p.invoice_no) + ' · ' + fmtDate(p.invoice_date) : '-'} / ${esc(p.fp_no) || '-'}</dd>
+        <dt>Est Date</dt><dd>${fmtDate(p.est_date)}</dd><dt>No FP</dt><dd>${esc((p.fpNos || []).join(', ')) || '-'}</dd>
         ${p.notes ? `<dt>Catatan</dt><dd>${esc(p.notes)}</dd>` : ''}</dl>
         <div class="sec-t">Item</div>${lines}
         <div class="totals"><div><span>Subtotal</span><span>${M(c.subtotal)}${I(c.subtotal)}</span></div>${c.disc > 0 ? `<div><span>Diskon</span><span>- ${M(c.disc)}</span></div>` : ''}<div><span>Total sebelum PPN</span><span>${M(c.dpp)}${I(c.dpp)}</span></div>${p.vat ? `<div><span>PPN 11%</span><span>${M(c.vatAmt)}</span></div>` : ''}${p.pph23 ? `<div><span>PPh 23 (${ERP.fmtNum(p.pph23_rate, 2)}%)</span><span>- ${M(c.pphAmt)}</span></div>` : ''}<div class="gt"><span>Total dibayar</span><span>${M(c.total)}${I(c.total)}</span></div>
         <div><span>Sudah dibayar</span><span>${M(p.paid)}</span></div><div><span>Sisa</span><span>${M(Math.max(0, c.total - p.paid))}</span></div></div>
-        <div class="sec-t">Penerimaan barang</div>${rcv}`,
+        <div class="sec-t">Pembayaran</div>${pays}<div class="sec-t">Penerimaan barang</div>${rcv}`,
       actions: [
         { icon: 'print', tip: 'Print PO', onClick: () => printPO(p, um) },
         ...(ERP.can.write() ? [{ icon: 'edit', tip: 'Edit PO', onClick: (mm) => { mm.close(); location.hash = '#/po/edit/' + p.id; } }] : []),
         ...(ERP.can.approve() && p.status !== 'approved' ? [{ icon: 'check', tip: 'Approve PO', cls: 'ok', onClick: (mm) => { mm.close(); approve(p); } }] : []),
-        ...(ERP.can.write() && p.status === 'approved' ? [{ icon: 'file', tip: 'Input invoice & FP supplier', onClick: (mm) => { mm.close(); invoiceModal(p); } }, { icon: 'wallet', tip: 'Input pembayaran', onClick: (mm) => { mm.close(); payModal(p); } }] : []),
+        { icon: 'download', tip: 'Export Excel PO ini', onClick: () => exportPOs([p], 'PO_' + p.po_number + '.xlsx') },
       ],
     });
     return m;
+  }
+
+  /* ---------- Export Excel (ringkasan PO + detail item) ---------- */
+  function exportPOs(list, filename) {
+    if (!list.length) { ERP.toast('Tidak ada PO untuk diexport', 'err'); return; }
+    const stage = (p) => STAGES.find((s) => s[0] === p.stage)[1];
+    const sum = list.map((p) => [p.po_number, fmtDate(p.po_date), fmtDate(p.est_date), p.supplier.name, p.supplier.company_code || '', p.currency, fxOf(p) || '', ERP.termText(p), p.vat ? 'YA' : '', p.pph23 ? 'YA ' + p.pph23_rate + '%' : '', p.urgent ? 'YA' : '', Number(p.subtotal), Number(p.discount_amount), Number(p.subtotal) - Number(p.discount_amount), Number(p.vat_amount), Number(p.pph23_amount || 0), Number(p.total), p.paid, p.status === 'approved' ? 'Approved' : 'Menunggu approval', p.received, p.ordered, (p.fpNos || []).join(', '), stage(p)]);
+    const det = [];
+    list.forEach((p) => p.items.forEach((i, n) => { const r = p.rc[i.id] || { G: 0, D: 0 }; det.push([p.po_number, fmtDate(p.po_date), fmtDate(p.est_date), p.supplier.name, p.currency, n + 1, i.brand, i.model, i.compound || '', i.gender || '', i.color || '', i.size || '', Number(i.qty), i.unit, Number(i.price), ERP.round(i.qty * i.price, p.currency), fxOf(p) ? Number(i.price) * fxOf(p) : '', r.G, r.D]); }));
+    ERP.xlsxExportMulti(filename, [
+      { name: 'Ringkasan PO', headers: ['No PO', 'Tanggal', 'Est Date', 'Supplier', 'Kode Supplier', 'Mata Uang', 'Rate IDR', 'Pembayaran', 'PPN 11%', 'PPh 23', 'Urgent', 'Subtotal', 'Diskon', 'Total sebelum PPN', 'PPN', 'PPh 23 (nilai)', 'Total dibayar', 'Sudah dibayar', 'Approval', 'Qty diterima', 'Qty dipesan', 'No FP', 'Status'], rows: sum },
+      { name: 'Detail Item', headers: ['No PO', 'Tanggal', 'Est Date', 'Supplier', 'Mata Uang', 'No', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'Qty', 'Satuan', 'Harga', 'Jumlah', 'Harga IDR', 'Diterima Good', 'Diterima Defect'], rows: det },
+    ]);
   }
 
   /* ---------- Daftar ---------- */
@@ -145,11 +129,11 @@
       { label: 'Diterima', html: (p) => `${qty(p.received)} / ${qty(p.ordered)}${bar(p.received, p.ordered, p.allReceived)}`, cls: 'nw' },
       { label: 'Dibayar', html: (p) => `${ERP.fmtNum(p.paid, ERP.decimals(p.currency))}${bar(p.paid, p.total, p.fullyPaid)}`, cls: 'nw' },
       { label: 'Pembayaran', v: (p) => ERP.termText(p), cls: 'hide-md', m: 'mh' },
-      { label: 'Invoice / FP', html: (p) => p.invoice_no || p.fp_no ? esc(p.invoice_no || '-') + `<small>${p.fp_no ? 'FP ' + esc(p.fp_no) : fmtDate(p.invoice_date)}</small>` : '-', cls: 'hide-md hide-lg', m: 'mh' },
+      { label: 'Est Date', html: (p) => (p.est_date ? fmtDate(p.est_date) + (p.est_date < ERP.today() && !p.allReceived ? '<small class="neg">terlambat</small>' : '') : '-'), cls: 'nw hide-md', m: 'mh' },
       { label: '', cls: 'act', html: (p) => btn('eye', 'Lihat detail', `data-a="view" data-id="${p.id}"`, 'sm') + btn('print', 'Print PO', `data-a="print" data-id="${p.id}"`, 'sm')
         + (canW ? btn('edit', 'Edit (perlu approval ulang)', `data-a="edit" data-id="${p.id}"`, 'sm') : '')
         + (ERP.can.approve() && p.status !== 'approved' ? btn('check', 'Approve PO', `data-a="approve" data-id="${p.id}"`, 'sm ok') : '')
-        + (canW && p.status === 'approved' ? btn('file', 'Input invoice & FP supplier', `data-a="inv" data-id="${p.id}"`, 'sm') + btn('wallet', 'Input pembayaran', `data-a="pay" data-id="${p.id}"`, 'sm') : '') },
+        + btn('download', 'Export Excel PO ini', `data-a="xls" data-id="${p.id}"`, 'sm') },
     ];
     const draw = () => {
       const base = data.pos.filter(matches);
@@ -163,13 +147,12 @@
     $('#q').oninput = ERP.debounce((e) => { S.q = norm(e.target.value.trim()); draw(); });
     $('#tabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { S.tab = b.dataset.t; draw(); } };
     if ($('#b-new')) $('#b-new').onclick = () => (location.hash = '#/po/new');
-    $('#b-prt').onclick = () => ERP.printTable('Daftar PO — ' + STAGES.find((s) => s[0] === S.tab)[1], [{ label: 'No PO', v: (p) => p.po_number + (p.urgent ? ' (URGENT)' : '') }, { label: 'Tanggal', v: (p) => fmtDate(p.po_date) }, { label: 'Supplier', v: (p) => p.supplier.name }, { label: 'Total dibayar', num: true, v: (p) => fmtMoney(p.total, p.currency) }, { label: 'Approval', v: (p) => (p.status === 'approved' ? 'Approved' : 'Menunggu') }, { label: 'Diterima', v: (p) => qty(p.received) + '/' + qty(p.ordered) }, { label: 'Dibayar', num: true, v: (p) => fmtMoney(p.paid, p.currency) }, { label: 'Pembayaran', v: (p) => ERP.termText(p) }, { label: 'Invoice', v: (p) => (p.invoice_no || '-') }, { label: 'No FP', v: (p) => p.fp_no || '' }], draw.rows);
-    $('#b-exp').onclick = () => ERP.xlsxExport('PO_' + ERP.today() + '.xlsx', 'PO', ['No PO', 'Tanggal', 'Supplier', 'Mata Uang', 'Rate IDR', 'Subtotal', 'Diskon', 'Total sebelum PPN', 'PPN', 'PPh 23', 'Total dibayar', 'Approval', 'Diterima', 'Dipesan', 'Dibayar', 'Pembayaran', 'Urgent', 'No Invoice', 'Tgl Invoice', 'No FP', 'Status'],
-      draw.rows.map((p) => [p.po_number, fmtDate(p.po_date), p.supplier.name, p.currency, fxOf(p) || '', p.subtotal, p.discount_amount, p.subtotal - p.discount_amount, p.vat_amount, p.pph23_amount || 0, p.total, p.status === 'approved' ? 'Approved' : 'Menunggu', p.received, p.ordered, p.paid, ERP.termText(p), p.urgent ? 'YA' : '', p.invoice_no || '', fmtDate(p.invoice_date), p.fp_no || '', STAGES.find((s) => s[0] === p.stage)[1]]));
+    $('#b-prt').onclick = () => ERP.printTable('Daftar PO — ' + STAGES.find((s) => s[0] === S.tab)[1], [{ label: 'No PO', v: (p) => p.po_number + (p.urgent ? ' (URGENT)' : '') }, { label: 'Tanggal', v: (p) => fmtDate(p.po_date) }, { label: 'Supplier', v: (p) => p.supplier.name }, { label: 'Total dibayar', num: true, v: (p) => fmtMoney(p.total, p.currency) }, { label: 'Approval', v: (p) => (p.status === 'approved' ? 'Approved' : 'Menunggu') }, { label: 'Diterima', v: (p) => qty(p.received) + '/' + qty(p.ordered) }, { label: 'Dibayar', num: true, v: (p) => fmtMoney(p.paid, p.currency) }, { label: 'Pembayaran', v: (p) => ERP.termText(p) }, { label: 'Est Date', v: (p) => fmtDate(p.est_date) }, { label: 'No FP', v: (p) => (p.fpNos || []).join(', ') }], draw.rows);
+    $('#b-exp').onclick = () => exportPOs(draw.rows, 'PO_' + ERP.today() + '.xlsx');
     $('#list').onclick = (e) => {
       const b = e.target.closest('[data-a]'); if (!b) return;
       const p = data.pos.find((x) => x.id === b.dataset.id);
-      ({ view: () => detailModal(p, data), print: () => printPO(p, data.userMap), edit: () => (location.hash = '#/po/edit/' + p.id), approve: () => approve(p), inv: () => invoiceModal(p), pay: () => payModal(p) })[b.dataset.a]();
+      ({ view: () => detailModal(p, data), print: () => printPO(p, data.userMap), edit: () => (location.hash = '#/po/edit/' + p.id), approve: () => approve(p), xls: () => exportPOs([p], 'PO_' + p.po_number + '.xlsx') })[b.dataset.a]();
     };
   }
 
@@ -183,10 +166,10 @@
     const pickA = (o) => Object.fromEntries(A.map((k) => [k, o[k] || '']));
     function newLine() { return { k: Math.random(), item_id: null, brand: '', model: '', compound: '', gender: '', color: '', size: '', unit: '', qty: 1, price: '', recvd: 0 }; }
     const st = old ? {
-      date: old.po_date, supplier: old.supplier.id ? old.supplier : null, payType: old.payment_type, tempoMode: old.tempo_mode || 'days', tempoDays: old.tempo_days || 30, tempoDate: old.tempo_date || '',
+      date: old.po_date, est: old.est_date || '', supplier: old.supplier.id ? old.supplier : null, payType: old.payment_type, tempoMode: old.tempo_mode || 'days', tempoDays: old.tempo_days || 30, tempoDate: old.tempo_date || '',
       vat: !!old.vat, pph: !!old.pph23, pphRate: old.pph23 ? old.pph23_rate : 2, urgent: !!old.urgent, discType: old.discount_type || 'pct', discVal: old.discount_value || 0, notes: old.notes || '', fx: Number(old.fx_rate) || 0,
       lines: old.items.map((i) => ({ k: Math.random(), id: i.id, item_id: i.item_id, ...pickA(i), qty: i.qty, price: i.price, recvd: old.recv[i.id] || 0 })),
-    } : { date: ERP.today(), supplier: null, payType: 'cash', tempoMode: 'days', tempoDays: 30, tempoDate: '', vat: false, pph: false, pphRate: 2, urgent: false, discType: 'pct', discVal: 0, notes: '', fx: 0, lines: [] };
+    } : { date: ERP.today(), est: '', supplier: null, payType: 'cash', tempoMode: 'days', tempoDays: 30, tempoDate: '', vat: false, pph: false, pphRate: 2, urgent: false, discType: 'pct', discVal: 0, notes: '', fx: 0, lines: [] };
     if (!st.lines.length) st.lines.push(newLine());
     const cur = () => (st.supplier ? st.supplier.currency || 'IDR' : 'IDR');
     const fx = () => (cur() !== 'IDR' && st.fx > 0 ? st.fx : 0);
@@ -195,6 +178,7 @@
       ${old && old.status === 'approved' ? '<div class="card" style="margin-bottom:10px;border-color:var(--warn)">PO ini sudah di-approve. Setelah disimpan, status kembali <b>Menunggu Approval</b> dan harus disetujui ulang oleh Supervisor.</div>' : ''}
       <div class="card"><div class="grid c4 po-top">
         ${ERP.field('Tanggal PO', ERP.dateInput('po_date', st.date))}
+        ${ERP.field('Est Date (estimasi barang datang)', ERP.dateInput('est_date', st.est))}
         ${ERP.field('Supplier *', `<input id="f-sup" placeholder="Cari nama supplier…" value="${esc(st.supplier ? st.supplier.name : '')}" autocomplete="off">`, 'po-sup')}
         ${ERP.field('Mata uang', `<input id="f-cur" value="${esc(cur())}" readonly>`, 'po-cur')}
         <label class="fld po-fx" id="fx-wrap"><span id="fx-lbl">Rate → IDR</span><input id="f-fx" inputmode="decimal" placeholder="mis. 16.300 (kosongkan jika tidak perlu)"></label>
@@ -222,7 +206,7 @@
     $('#f-tempo').onchange = (e) => { st.payType = e.target.checked ? 'tempo' : 'cash'; $('#f-cash').checked = st.payType === 'cash'; $('#f-tempo').checked = st.payType === 'tempo'; syncTempo(); };
     $('#f-tmode').onchange = (e) => { st.tempoMode = e.target.value; syncTempo(); };
     $('#f-tdays').oninput = (e) => (st.tempoDays = parseInt(e.target.value) || 0);
-    v.onchange = (e) => { if (e.target.name === 'tempo_date') st.tempoDate = ERP.parseDate(e.target.value); if (e.target.name === 'po_date') st.date = ERP.parseDate(e.target.value) || st.date; };
+    v.onchange = (e) => { if (e.target.name === 'tempo_date') st.tempoDate = ERP.parseDate(e.target.value); if (e.target.name === 'po_date') st.date = ERP.parseDate(e.target.value) || st.date; if (e.target.name === 'est_date') st.est = ERP.parseDate(e.target.value); };
     $('#f-vat').onchange = (e) => { st.vat = e.target.checked; totals(); };
     $('#f-pph').onchange = (e) => { st.pph = e.target.checked; syncFx(); totals(); };
     $('#f-pphr').oninput = (e) => { st.pphRate = e.target.value; totals(); };
@@ -296,21 +280,23 @@
       if (st.payType === 'tempo' && st.tempoMode === 'days' && !(st.tempoDays > 0)) { ERP.toast('Isi jumlah hari tempo', 'err'); return; }
       if (st.payType === 'tempo' && st.tempoMode === 'date' && !st.tempoDate) { ERP.toast('Isi tanggal tempo', 'err'); return; }
       if (st.pph && !(ERP.num(st.pphRate) > 0)) { ERP.toast('Isi tarif PPh 23', 'err'); return; }
+      if (!old && !st.supplier.company_code) { ERP.toast('Supplier ini belum punya Kode Perusahaan. Isi dulu di menu Supplier.', 'err'); return; }
+      if (!old && !ERP.divCode()) { ERP.toast('Akun Anda belum punya Divisi. Minta Admin mengisinya di menu Pengguna.', 'err'); return; }
       const c = calc(lines, st.discType, st.discVal, st.vat, st.pph, st.pphRate, cur());
-      const hdr = { po_date: st.date, supplier_id: st.supplier.id, currency: cur(), fx_rate: fx() || null, payment_type: st.payType, tempo_mode: st.payType === 'tempo' ? st.tempoMode : null, tempo_days: st.payType === 'tempo' && st.tempoMode === 'days' ? st.tempoDays : null, tempo_date: st.payType === 'tempo' && st.tempoMode === 'date' ? st.tempoDate : null,
+      const hdr = { po_date: st.date, est_date: st.est || null, supplier_id: st.supplier.id, currency: cur(), fx_rate: fx() || null, payment_type: st.payType, tempo_mode: st.payType === 'tempo' ? st.tempoMode : null, tempo_days: st.payType === 'tempo' && st.tempoMode === 'days' ? st.tempoDays : null, tempo_date: st.payType === 'tempo' && st.tempoMode === 'date' ? st.tempoDate : null,
         vat: st.vat, pph23: st.pph, pph23_rate: st.pph ? ERP.num(st.pphRate) : null, pph23_amount: c.pphAmt, urgent: st.urgent, discount_type: st.discType, discount_value: ERP.num(st.discVal), subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, total: c.total, notes: st.notes || null };
       const rec = (l, n, poId) => ({ po_id: poId, line_no: n + 1, item_id: l.item_id, brand: l.brand, model: l.model, compound: l.compound || null, gender: l.gender || null, color: l.color || null, size: l.size || null, unit: l.unit, qty: ERP.num(l.qty), price: ERP.num(l.price) });
       const btnSave = $('#b-save'); btnSave.disabled = true;
       try {
         let poId;
         if (!old) {
-          const seq = await DB.nextPoSeq();
-          const [po] = await DB.insert('purchase_orders', { ...hdr, po_seq: seq, po_number: ERP.poNumber(seq, st.date), status: 'pending', revision: 0 });
+          const seq = await DB.nextPoSeq(st.supplier.id, Number(st.date.slice(0, 4)));
+          const [po] = await DB.insert('purchase_orders', { ...hdr, po_seq: seq, po_number: ERP.poNumber(seq, st.date, st.supplier.company_code, ERP.divCode()), status: 'pending', revision: 0 });
           poId = po.id;
           await DB.insert('po_items', lines.map((l, n) => rec(l, n, poId)));
         } else {
           poId = old.id;
-          await DB.update('purchase_orders', poId, { ...hdr, po_number: ERP.poNumber(old.po_seq, st.date), status: 'pending', revision: old.status === 'approved' ? (old.revision || 0) + 1 : old.revision || 0, approved_by: null, approved_at: null });
+          await DB.update('purchase_orders', poId, { ...hdr, status: 'pending', revision: old.status === 'approved' ? (old.revision || 0) + 1 : old.revision || 0, approved_by: null, approved_at: null });
           const keep = new Set(lines.filter((l) => l.id).map((l) => l.id));
           for (const i of old.items) if (!keep.has(i.id)) await DB.remove('po_items', i.id);
           for (let n = 0; n < lines.length; n++) { const l = lines[n]; if (l.id) { const { po_id, ...r } = rec(l, n, poId); await DB.update('po_items', l.id, r); } else await DB.insert('po_items', rec(l, n, poId)); }

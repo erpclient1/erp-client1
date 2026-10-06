@@ -38,7 +38,7 @@
     const poMap = Object.fromEntries(data.pos.map((p) => [p.id, p]));
     const dos = data.dos.slice().sort((a, b) => (b.do_date || '').localeCompare(a.do_date || ''));
     const canR = ERP.can.receive();
-    v.innerHTML = `<div class="toolbar">${ERP.searchBox('q', 'Cari client / no DO / no PO / brand / model / color / size…')}<div class="tb-actions">${canR ? btn('plus', 'Buat Delivery Order', 'id="b-new"', 'primary') : ''}${btn('print', 'Print daftar', 'id="b-prt"')}</div></div><div id="list"></div>`;
+    v.innerHTML = `<div class="toolbar">${ERP.searchBox('q', 'Cari client / no DO / no PO / brand / model / color / size…')}<div class="tb-actions">${canR ? btn('plus', 'Buat Delivery Order', 'id="b-new"', 'primary') : ''}${btn('download', 'Export Excel', 'id="b-exp"')}${btn('print', 'Print daftar', 'id="b-prt"')}</div></div><div id="list"></div>`;
     $('#q').value = S.q;
     const poNo = (d) => (poMap[d.po_id] || {}).po_number || '-';
     const filtered = () => dos.filter((d) => !S.q || norm(d.do_number).includes(S.q) || norm(d.client.name).includes(S.q) || norm(poNo(d)).includes(S.q) || d.items.some((i) => norm(ERP.attrText(i)).includes(S.q)));
@@ -47,17 +47,25 @@
       { label: 'No PO', v: poNo, cls: 'nw' },
       { label: 'Item', v: (d) => [...new Set(d.items.map((i) => [i.brand, i.model].filter(Boolean).join(' ')))].join(', '), cls: 'hide-md', m: 'mf' }, { label: 'Total Qty', v: (d) => qty(d.total), cls: 'n' },
       { label: 'Invoice / FP', html: (d) => (d.inv_no || d.fp_no) ? esc(d.inv_no || '-') + (d.fp_no ? `<small>FP ${esc(d.fp_no)}</small>` : '') : '-', cls: 'hide-md', m: 'mh' },
-      { label: '', cls: 'act', html: (d) => btn('eye', 'Lihat detail', `data-a="view" data-id="${d.id}"`, 'sm') + btn('print', 'Print Delivery Order', `data-a="print" data-id="${d.id}"`, 'sm') + (canR ? btn('file', 'Input invoice & FP', `data-a="inv" data-id="${d.id}"`, 'sm') + btn('trash', 'Batalkan DO', `data-a="del" data-id="${d.id}"`, 'sm danger') : '') },
+      { label: '', cls: 'act', html: (d) => btn('download', 'Export Excel DO ini', `data-a="xls" data-id="${d.id}"`, 'sm') + btn('eye', 'Lihat detail', `data-a="view" data-id="${d.id}"`, 'sm') + btn('print', 'Print Delivery Order', `data-a="print" data-id="${d.id}"`, 'sm') + (canR ? btn('file', 'Input invoice & FP', `data-a="inv" data-id="${d.id}"`, 'sm') + btn('trash', 'Batalkan DO', `data-a="del" data-id="${d.id}"`, 'sm danger') : '') },
     ];
     const draw = () => { $('#list').innerHTML = ERP.table(cols, filtered(), { empty: dos.length ? 'Tidak ada hasil.' : 'Belum ada Delivery Order.' }); };
     draw();
     $('#q').oninput = ERP.debounce((e) => { S.q = norm(e.target.value.trim()); draw(); });
     if ($('#b-new')) $('#b-new').onclick = () => (location.hash = '#/do/new');
+    const exportDO = (list, filename) => {
+      const rows = [];
+      list.forEach((d) => d.items.forEach((i, n) => rows.push([d.do_number, fmtDate(d.do_date), d.client.name, poNo(d), d.ship_to || '', d.inv_no || '', d.fp_no || '', d.notes || '', n + 1, i.brand, i.model, i.compound || '', i.gender || '', i.color || '', i.size || '', i.grade === 'D' ? 'D' : 'G', Number(i.qty), i.unit])));
+      if (!rows.length) { ERP.toast('Tidak ada DO untuk diexport', 'err'); return; }
+      ERP.xlsxExport(filename, 'Delivery Order', ['No DO', 'Tanggal', 'Client', 'No PO', 'Alamat Kirim', 'No Invoice', 'No FP', 'Catatan', 'No', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'G/D', 'Qty', 'Satuan'], rows);
+    };
+    $('#b-exp').onclick = () => exportDO(filtered(), 'DeliveryOrder_' + ERP.today() + '.xlsx');
     $('#b-prt').onclick = () => ERP.printTable('Daftar Delivery Order', [{ label: 'No DO', v: (d) => d.do_number }, { label: 'Tanggal', v: (d) => fmtDate(d.do_date) }, { label: 'Client', v: (d) => d.client.name }, { label: 'No PO', v: poNo }, { label: 'Item', v: (d) => d.items.map((i) => i.brand + ' ' + i.model).join(', ') }, { label: 'Total Qty', num: true, v: (d) => qty(d.total) }, { label: 'Invoice', v: (d) => d.inv_no || '' }, { label: 'No FP', v: (d) => d.fp_no || '' }], filtered());
     $('#list').onclick = async (e) => {
       const b = e.target.closest('[data-a]'); if (!b) return;
       const d = dos.find((x) => x.id === b.dataset.id);
-      if (b.dataset.a === 'print') printDO(d, poNo(d));
+      if (b.dataset.a === 'xls') exportDO([d], 'DO_' + d.do_number.replace(/[\\/:*?"<>|]/g, '-') + '.xlsx');
+      else if (b.dataset.a === 'print') printDO(d, poNo(d));
       else if (b.dataset.a === 'inv') invModal(d);
       else if (b.dataset.a === 'view') ERP.modal({ title: esc(d.do_number), wide: true, html: `<dl class="kv"><dt>Tanggal</dt><dd>${fmtDate(d.do_date)}</dd><dt>Client</dt><dd>${esc(d.client.name)}</dd><dt>Ref. PO</dt><dd>${esc(poNo(d))}</dd><dt>Alamat kirim</dt><dd>${esc(d.ship_to || '-')}</dd><dt>Invoice / FP</dt><dd>${esc(d.inv_no) || '-'} / ${esc(d.fp_no) || '-'}</dd>${d.notes ? `<dt>Catatan</dt><dd>${esc(d.notes)}</dd>` : ''}<dt>Dibuat oleh</dt><dd>${esc(d.creator)}</dd></dl><div class="sec-t">Item</div>${ERP.table(itemCols, d.items)}`, actions: [{ icon: 'print', tip: 'Print', onClick: () => printDO(d, poNo(d)) }] });
       else if (b.dataset.a === 'del') {
