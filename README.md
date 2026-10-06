@@ -40,7 +40,7 @@ Aturan keamanan sama dengan versi Supabase, tetapi ditegakkan oleh server ini: h
 ## 2. Pasang Supabase (data terpusat)
 
 1. Buat proyek di <https://supabase.com> (region terdekat, mis. Singapore).
-2. **SQL Editor** > New query > tempel seluruh isi `supabase/schema.sql` > Run. (Jika skema versi lama pernah dijalankan: jalankan dulu `supabase/reset_dev.sql`, yang menghapus data bisnis.)
+2. **SQL Editor** > New query > tempel seluruh isi `supabase/schema.sql` > Run. (Database yang sudah berjalan versi lama: cukup jalankan `supabase/migration_002.sql`.) (Jika skema versi lama pernah dijalankan: jalankan dulu `supabase/reset_dev.sql`, yang menghapus data bisnis.)
 3. **Edge Functions**: deploy `pin-login` dan `admin-users` (isi dari folder `supabase/functions/...`).
    - Lewat CLI: `supabase login`, `supabase link --project-ref <ref>`, `supabase functions deploy pin-login` dan `supabase functions deploy admin-users`.
    - Atau lewat dashboard: Edge Functions > Deploy a new function > tempel kode `index.ts`.
@@ -74,6 +74,7 @@ Aturan keamanan sama dengan versi Supabase, tetapi ditegakkan oleh server ini: h
 | Admin (superuser) | Semua fungsi: kelola Supplier, Item, Client, PO (buat/edit), invoice & pembayaran, penerimaan barang, DO, user, pengaturan, dan **approve PO**. |
 | Supervisor | Kelola data/PO dan **approve PO** (tanpa kelola user dan pengaturan). |
 | Gudang | Input penerimaan barang (Goods Received) dan buat Delivery Order. |
+| Finance | Modul **Pembayaran**: input FP dan pembayaran supplier; melihat PO, Goods Received, Supplier. |
 | Viewer | Hanya melihat. |
 
 Modul yang tampil bisa diatur per user. Aturan ditegakkan di database (RLS + trigger), bukan hanya di tampilan.
@@ -82,14 +83,16 @@ Modul yang tampil bisa diatur per user. Aturan ditegakkan di database (RLS + tri
 
 - **Urutan menu:** Master Item, Supplier, Client, Purchase Order, Goods Received, Delivery Order, Report, Stock, Analisa (+ Pengguna, Pengaturan untuk Admin).
 - **Master Item:** Brand, Model Name, Compound Name, Gender (GS/Man/Woman/INF/PS/JR/KID), Colour, Size (3T … 15), Satuan (PRS/KG). Tidak ada harga di master; kombinasi varian harus unik.
-- **PO:** kolom No, Brand, Model, Compound, Gender, Color, Size, Qty, Satuan, Harga (harga diisi manual). Nomor `PO 001 / I / 2026` (urut berkelanjutan, bulan romawi dari tanggal PO).
-  - Total dibayar = (subtotal − diskon) + PPN 11% (opsional) − **PPh 23** (opsional, tarif default 2% dari total sebelum PPN, bisa diubah per PO).
-  - **Rate**: untuk PO mata uang asing (mis. USD) isi rate → kolom *Harga IDR* dan *Jumlah IDR* muncul terpisah, total IDR dihitung otomatis.
-  - PO baru / PO yang diedit → **Menunggu Approval** sampai Supervisor menyetujui. Section: *PO Aktif* → *Barang Diterima Semua* → *PO Selesai* (diterima semua **dan** lunas).
-  - Invoice supplier + **No FP** diisi dari tombol invoice di PO.
+- **PO:** kolom No, Brand, Model, Compound, Gender, Color, Size, Qty, Satuan, Harga (harga diisi manual), plus **Est Date** (estimasi barang datang).
+  - **Nomor PO** `SSBI-DM-MAIN-202610005`: `SSBI` = kode perusahaan kita (Pengaturan), `DM` = **Kode Perusahaan supplier** (menu Supplier, wajib), `MAIN` = **divisi** user pembuat (menu Pengguna), `2026` tahun, `10` bulan, `005` urutan **per supplier, mulai 001, reset hanya saat ganti tahun**. Nomor dikunci saat PO dibuat.
+  - Total dibayar = (subtotal − diskon) + PPN 11% (opsional) − **PPh 23** (opsional, default 2% dari total sebelum PPN).
+  - **Rate**: untuk PO mata uang asing isi rate → kolom *Harga IDR* dan *Jumlah IDR* muncul terpisah.
+  - PO baru / PO yang diedit → **Menunggu Approval** sampai Admin/Supervisor menyetujui. Section: *PO Aktif* → *Barang Diterima Semua* → *PO Selesai* (diterima semua **dan** lunas).
+  - Pembayaran **tidak** diinput dari PO; diisi lewat modul Pembayaran. Setiap PO punya tombol **Export Excel**.
 - **Goods Received:** hanya PO yang sudah di-approve; penerimaan boleh sebagian, dicatat **Good (G)** dan **Defect (D)**; tanpa harga.
 - **Delivery Order:** **No DO diketik manual** (harus unik), client dari Database Client, **terkait satu PO** (barang yang boleh dikirim = hasil penerimaan PO itu, per G/D), tanpa harga. No Invoice & No FP ke client bisa diisi saat membuat atau sesudahnya.
-- **Report:** satu baris = satu varian pada satu PO (per G/D): Qty PO, Qty Diterima, **Kurang** (Qty PO − Good − Defect), Qty Out (lewat DO), **Balance** = Qty PO − Qty Out (baris D: Diterima − Out).
+- **Pembayaran (Finance):** pilih supplier → daftar barang yang sudah diterima per surat jalan (G/D) dengan harga dari PO → centang → **Input FP & Pembayaran** (No Faktur Pajak, Tanggal, Jumlah, Bank Asal, Catatan). Nilai bayar per baris = qty × harga × (total PO ÷ subtotal PO) (diskon, PPN, PPh 23 proporsional). Jumlah boleh sebagian (dibagi proporsional). Setelah disimpan, pembayaran otomatis tercatat di PO terkait; tiap baris berstatus Belum / Sebagian / Lunas. Daftar bank dikelola di Pengaturan.
+- **Report:** satu baris = satu varian pada satu PO (per G/D): Qty PO, Qty Diterima, **Kurang** (Qty PO − Good − Defect), Qty Out (lewat DO), **Balance** = Qty Diterima − Qty Out.
 - **Stock:** barang yang sudah diterima lewat Goods Received: Qty In, Qty Out (DO), **Balance = stok di tangan**; tab *Ringkasan per varian* menjumlahkan semua PO.
 - Analisa: dari PO berstatus Approved (+ riwayat import Excel), dipisah per mata uang, per varian. Fluktuasi = (tertinggi − terendah) ÷ terendah.
 - PIN salah 5x → akun terkunci 15 menit.
@@ -105,7 +108,8 @@ js/db.js              lapisan data: adapter demo (browser), server lokal, dan Su
 server/server.js      server lokal Node + SQLite (opsional)
 start-server.bat      menjalankan server lokal di Windows
 js/app.js             login PIN, layout, router, hak akses
-js/mod-*.js           modul: items, suppliers, clients, po, gr, do, report (+stock), analysis, admin (user+pengaturan)
-supabase/schema.sql   tabel, RLS, trigger approval, fungsi PIN
+js/mod-*.js           modul: items, suppliers, clients, po, gr, do, payment, report (+stock), analysis, admin (user, divisi, pengaturan)
+supabase/schema.sql   tabel, RLS, trigger approval, fungsi PIN (sudah memuat revisi 002)
+supabase/migration_002.sql  migrasi untuk database yang sudah berjalan (divisi, pembayaran, nomor PO baru)
 supabase/functions/   pin-login, admin-users
 ```
