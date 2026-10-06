@@ -166,27 +166,64 @@
         { label: 'Item', v: itemsTxt, cls: 'hide-md', m: 'mf' },
         { label: '', cls: 'act', html: (p) => btn('download', 'Export Excel PO ini', `data-a="xls" data-id="${p.id}"`, 'sm') + btn('eye', 'Lihat penerimaan', `data-a="hist" data-id="${p.id}"`, 'sm') },
       ];
+      const rcTotals = (r) => { let g = 0, d = 0; r.g.items.forEach((x) => { if (x.grade === 'D') d += Number(x.qty); else g += Number(x.qty); }); return [g, d]; };
+      const sa = (a, r) => `data-sj="${a}" data-id="${r.p.id}" data-gid="${r.g.id}"`;
+      const sjCols = [
+        { label: 'No Surat Jalan', html: (r) => `<b>${esc(r.g.delivery_note_no)}</b>`, cls: 'nw', m: 'mt' },
+        { label: 'Tgl Terima', v: (r) => fmtDate(r.g.gr_date), cls: 'nw' },
+        { label: 'No PO', v: (r) => r.p.po_number, cls: 'nw' },
+        { label: 'Supplier', v: (r) => r.p.supplier.name },
+        { label: 'Item', v: (r) => [...new Set(r.g.items.map((x) => { const it = r.p.items.find((i) => i.id === x.po_item_id) || {}; return [it.brand, it.model].filter(Boolean).join(' '); }))].join(', '), cls: 'hide-md', m: 'mf' },
+        { label: 'Good / Defect', v: (r) => { const [g, d] = rcTotals(r); return qty(g) + ' / ' + qty(d); }, cls: 'nw' },
+        { label: 'Diterima oleh', v: (r) => r.g.received_by, cls: 'hide-md' },
+        { label: '', cls: 'act', html: (r) => btn('eye', 'Lihat rincian', sa('view', r), 'sm') + btn('print', 'Print bukti penerimaan', sa('print', r), 'sm') + btn('download', 'Export Excel', sa('xls', r), 'sm') + (canR ? btn('edit', 'Revisi penerimaan', sa('edit', r), 'sm') + btn('trash', 'Hapus penerimaan', sa('del', r), 'sm danger') : '') },
+      ];
+      const rcMatch = (r) => !S.q || norm(r.p.po_number).includes(S.q) || norm(r.p.supplier.name).includes(S.q) || norm(r.g.delivery_note_no).includes(S.q) || norm(r.g.received_by).includes(S.q) || r.g.items.some((x) => norm(ERP.attrText(r.p.items.find((i) => i.id === x.po_item_id) || {})).includes(S.q));
+      let curRc = [];
       const draw = () => {
         const base = approved.filter(match);
         const wait = base.filter((p) => !p.allReceived), fin = base.filter((p) => p.allReceived);
-        $('#tabs').innerHTML = `<button data-t="wait" class="${S.tab === 'wait' ? 'on' : ''}">PO Menunggu Penerimaan<span class="cnt">${wait.length}</span></button><button data-t="final" class="${S.tab === 'final' ? 'on' : ''}">Daftar Barang Penerimaan Final<span class="cnt">${fin.length}</span></button>`;
+        curRc = approved.flatMap((p) => p.receipts.map((g) => ({ id: g.id, p, g }))).filter(rcMatch).sort((a, b) => String(b.g.gr_date).localeCompare(String(a.g.gr_date)));
+        $('#tabs').innerHTML = `<button data-t="wait" class="${S.tab === 'wait' ? 'on' : ''}">PO Menunggu Penerimaan<span class="cnt">${wait.length}</span></button><button data-t="final" class="${S.tab === 'final' ? 'on' : ''}">Daftar Barang Penerimaan Final<span class="cnt">${fin.length}</span></button><button data-t="sj" class="${S.tab === 'sj' ? 'on' : ''}">Surat Jalan (Revisi / Hapus)<span class="cnt">${curRc.length}</span></button>`;
+        if (S.tab === 'sj') {
+          cur = [...new Map(curRc.map((r) => [r.p.id, r.p])).values()];
+          $('#list').innerHTML = `<div class="note" style="margin-bottom:8px">Setiap baris = satu surat jalan. Gunakan ikon pensil untuk <b>merevisi</b> jumlah penerimaan atau ikon tempat sampah untuk <b>menghapus</b> (barang pada surat jalan itu dianggap belum diterima, dan PO otomatis menyesuaikan).</div>` + ERP.table(sjCols, curRc, { empty: 'Belum ada penerimaan barang.', cls: 'rpt t3' });
+          return;
+        }
         cur = S.tab === 'wait' ? wait : fin;
         const empty = S.tab === 'wait' ? 'Tidak ada PO yang menunggu penerimaan. (Hanya PO yang sudah di-approve Supervisor yang tampil di sini.)' : 'Belum ada PO yang barangnya diterima semua.';
-        $('#list').innerHTML = ERP.table(S.tab === 'wait' ? waitCols : finalCols, cur, { empty, rowCls: (p) => (p.urgent ? 'urgent' : '') });
+        $('#list').innerHTML = `<div class="note" style="margin-bottom:8px">Untuk merevisi atau menghapus penerimaan, buka tab <b>Surat Jalan (Revisi / Hapus)</b>.</div>` + ERP.table(S.tab === 'wait' ? waitCols : finalCols, cur, { empty, rowCls: (p) => (p.urgent ? 'urgent' : '') });
       };
       draw();
       $('#q').oninput = ERP.debounce((e) => { S.q = norm(e.target.value.trim()); draw(); });
       $('#tabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { S.tab = b.dataset.t; draw(); } };
       $('#b-exp').onclick = () => exportGR(cur, 'GoodsReceived_' + ERP.today() + '.xlsx');
-      $('#b-prt').onclick = () => (S.tab === 'wait'
+      $('#b-prt').onclick = () => (S.tab === 'sj'
+        ? ERP.printTable('Daftar Surat Jalan Penerimaan', [{ label: 'No SJ', v: (r) => r.g.delivery_note_no }, { label: 'Tgl Terima', v: (r) => fmtDate(r.g.gr_date) }, { label: 'No PO', v: (r) => r.p.po_number }, { label: 'Supplier', v: (r) => r.p.supplier.name }, { label: 'Good / Defect', v: (r) => { const [g, d] = rcTotals(r); return qty(g) + ' / ' + qty(d); } }, { label: 'Diterima oleh', v: (r) => r.g.received_by }], curRc)
+        : S.tab === 'wait'
         ? ERP.printTable('PO Menunggu Penerimaan Barang', [{ label: 'No PO', v: (p) => p.po_number }, { label: 'Tanggal', v: (p) => fmtDate(p.po_date) }, { label: 'Supplier', v: (p) => p.supplier.name }, { label: 'Item', v: itemsTxt }, { label: 'Diterima', v: (p) => qty(p.received) + '/' + qty(p.ordered) }], cur)
         : ERP.printTable('Daftar Barang Penerimaan Final', finalCols.slice(0, 6).map((c) => ({ label: c.label, v: c.v || ((p) => p.po_number) })), cur));
       $('#list').onclick = (e) => {
+        const sj = e.target.closest('[data-sj]');
+        if (sj) {
+          const p = data.pos.find((x) => x.id === sj.dataset.id), g = p && p.receipts.find((x) => x.id === sj.dataset.gid);
+          if (!p || !g) return;
+          const a = sj.dataset.sj;
+          if (a === 'edit') reviseModal(p, g, data);
+          else if (a === 'del') deleteReceipt(p, data, g);
+          else if (a === 'print') printGR(p, g);
+          else if (a === 'xls') exportGR([p], 'GoodsReceived_' + g.delivery_note_no.replace(/[\\/:*?"<>|]/g, '-') + '.xlsx');
+          else historyModal(p);
+          return;
+        }
         const b = e.target.closest('[data-a]'); if (!b) return;
         const p = data.pos.find((x) => x.id === b.dataset.id);
         if (b.dataset.a === 'xls') exportGR([p], 'GoodsReceived_' + p.po_number + '.xlsx');
         else if (b.dataset.a === 'recv') receiveModal(p);
-        else {
+        else historyModal(p);
+      };
+      function historyModal(p) {
+        {
           const m = ERP.modal({
             title: 'Penerimaan — ' + esc(p.po_number), wide: true,
             html: p.receipts.length ? p.receipts.map((g, n) => `<div class="card" style="margin-bottom:10px"><div class="page-head" style="margin:0 0 6px"><h3>${fmtDate(g.gr_date)} · SJ ${esc(g.delivery_note_no)}</h3>${btn('print', 'Print bukti penerimaan', `data-pr="${n}"`, 'sm')}${canR ? btn('edit', 'Revisi penerimaan', `data-rv="${n}"`, 'sm') + btn('trash', 'Hapus penerimaan', `data-rd="${n}"`, 'sm danger') : ''}</div><div class="note">Diterima oleh <b>${esc(g.received_by)}</b></div>${ERP.table([
