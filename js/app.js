@@ -21,7 +21,7 @@
     module: (m) => !!ERP.user && ERP.user.modules.includes(m) && (!['users', 'settings'].includes(m) || ERP.user.role === 'admin'),
     write: () => !!ERP.user && ['admin', 'supervisor'].includes(ERP.user.role),
     receive: () => !!ERP.user && ['admin', 'supervisor', 'gudang'].includes(ERP.user.role),
-    approve: () => !!ERP.user && ERP.user.role === 'supervisor',
+    approve: () => !!ERP.user && ['admin', 'supervisor'].includes(ERP.user.role),
   };
 
   /* ---------- Tema ---------- */

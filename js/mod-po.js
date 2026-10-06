@@ -57,7 +57,7 @@
 
   /* ---------- Aksi ---------- */
   async function approve(p) {
-    if (!ERP.can.approve()) { ERP.toast('Hanya Supervisor yang dapat approve', 'err'); return; }
+    if (!ERP.can.approve()) { ERP.toast('Hanya Admin atau Supervisor yang dapat approve', 'err'); return; }
     if (!(await ERP.confirm(`Approve <b>${esc(p.po_number)}</b> (${fmtMoney(p.total, p.currency)})?`))) return;
     try { await DB.update('purchase_orders', p.id, { status: 'approved', approved_by: ERP.user.id, approved_at: new Date().toISOString() }); ERP.toast('PO disetujui'); ERP.refresh(); }
     catch (e) { ERP.toast(e.message, 'err'); }

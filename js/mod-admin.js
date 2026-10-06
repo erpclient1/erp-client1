@@ -16,7 +16,7 @@
     </div>
     <div class="sec-t">Modul yang boleh diakses</div>
     <div class="chk-row" id="mods">${ERP.MODS_ALL.map((m) => `<label class="chk"><input type="checkbox" data-mod="${m}" ${u.modules.includes(m) ? 'checked' : ''}> ${esc(ERP.MOD_LABEL[m])}</label>`).join('')}</div>
-    <div class="note">Admin: kelola data, PO, pembayaran · Supervisor: sama + <b>approve PO</b> · Gudang: input penerimaan barang · Viewer: hanya melihat. Modul Pengguna & Pengaturan hanya berlaku untuk role Admin.</div>
+    <div class="note">Admin (superuser): semua fungsi + <b>approve PO</b> + kelola user · Supervisor: kelola data, PO, pembayaran + <b>approve PO</b> · Gudang: input penerimaan barang · Viewer: hanya melihat. Modul Pengguna & Pengaturan hanya berlaku untuk role Admin.</div>
     <label class="chk" style="margin-top:8px"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}> Akun aktif</label>`;
   }
 
@@ -59,7 +59,7 @@
 
   /* ================= DUMMY DATA ================= */
   async function loadDummy() {
-    const canApprove = DB.mode === 'local' || ERP.user.role === 'supervisor';
+    const canApprove = DB.mode === 'local' || ['admin', 'supervisor'].includes(ERP.user.role);
     const D = (o) => ({ ...o, is_dummy: true });
     const sup = await DB.insert('suppliers', [
       D({ name: 'PT Sumber Makmur (Contoh)', currency: 'IDR', contact_person: 'Budi Santoso', position: 'Sales Manager', mobile: '0812-0000-1111', office_phone: '021-5550001', email: 'budi@sumbermakmur.example', billing_address: 'Jl. Industri No. 1, Jakarta', npwp: '01.234.567.8-012.000', tax_payer: 'PT Sumber Makmur', nitku: '0123456789012340000000', tax_address: 'Jl. Industri No. 1, Jakarta' }),

@@ -155,7 +155,7 @@ const same = (a, b) => (a == null && b == null) || String(a) === String(b);
 function guardPO(old, row, user) {
   if (!old) { Object.assign(row, { status: 'pending', approved_by: null, approved_at: null, revision: 0, created_by: user.id }); return; }
   if (row.status === 'approved' && old.status !== 'approved') {
-    if (user.role !== 'supervisor') throw fail(403, 'Hanya Supervisor yang dapat meng-approve PO');
+    if (!['admin', 'supervisor'].includes(user.role)) throw fail(403, 'Hanya Admin atau Supervisor yang dapat meng-approve PO');
     row.approved_by = user.id; row.approved_at = now();
   }
   if (old.status === 'approved' && row.status === 'approved' && PO_CONTENT.some((k) => !same(old[k], row[k]))) { row.status = 'pending'; row.revision = (old.revision || 0) + 1; }

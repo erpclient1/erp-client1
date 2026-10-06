@@ -242,7 +242,7 @@ create table if not exists hist_purchases (
 
 -- =====================================================================
 -- Trigger kontrol approval PO
---  * hanya SUPERVISOR yang boleh mengubah status menjadi 'approved'
+--  * hanya ADMIN (superuser) dan SUPERVISOR yang boleh mengubah status menjadi 'approved'
 --  * mengubah isi PO yang sudah approved => otomatis kembali 'pending'
 -- =====================================================================
 create or replace function po_guard() returns trigger
@@ -255,7 +255,7 @@ begin
   end if;
   new.updated_at := now();
   if new.status = 'approved' and old.status <> 'approved' then
-    if app_role() <> 'supervisor' then raise exception 'Hanya Supervisor yang dapat meng-approve PO'; end if;
+    if app_role() not in ('admin','supervisor') then raise exception 'Hanya Admin atau Supervisor yang dapat meng-approve PO'; end if;
     new.approved_by := app_user_id(); new.approved_at := now();
   end if;
   if old.status = 'approved' and new.status = 'approved' and

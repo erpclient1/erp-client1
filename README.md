@@ -35,7 +35,7 @@ cloudflared-windows-amd64.exe tunnel --url http://localhost:8080
 
 Alamat `https://....trycloudflare.com` yang muncul bisa dibuka dari mana saja. Alamat berubah setiap kali dijalankan ulang dan layanan ini untuk uji coba (tanpa jaminan uptime). PC harus tetap menyala dan tidak sleep (Pengaturan Windows > Power & sleep > Never).
 
-Aturan keamanan sama dengan versi Supabase, tetapi ditegakkan oleh server ini: hak akses per role/modul, approval PO hanya Supervisor, PIN ter-hash (scrypt), kunci 15 menit setelah 5x salah. Lewat WiFi kantor tanpa HTTPS, PIN terkirim tanpa enkripsi; lewat tunnel Cloudflare sudah HTTPS.
+Aturan keamanan sama dengan versi Supabase, tetapi ditegakkan oleh server ini: hak akses per role/modul, approval PO hanya Admin/Supervisor, PIN ter-hash (scrypt), kunci 15 menit setelah 5x salah. Lewat WiFi kantor tanpa HTTPS, PIN terkirim tanpa enkripsi; lewat tunnel Cloudflare sudah HTTPS.
 
 ## 2. Pasang Supabase (data terpusat)
 
@@ -71,8 +71,8 @@ Aturan keamanan sama dengan versi Supabase, tetapi ditegakkan oleh server ini: h
 
 | Role | Kemampuan |
 |---|---|
-| Admin | Kelola Supplier, Item, PO (buat/edit), invoice & pembayaran, penerimaan barang, user, pengaturan. **Tidak** bisa approve PO. |
-| Supervisor | Seperti Admin untuk data/PO, **plus approve PO**. |
+| Admin (superuser) | Semua fungsi: kelola Supplier, Item, Client, PO (buat/edit), invoice & pembayaran, penerimaan barang, DO, user, pengaturan, dan **approve PO**. |
+| Supervisor | Kelola data/PO dan **approve PO** (tanpa kelola user dan pengaturan). |
 | Gudang | Input penerimaan barang (Goods Received) dan buat Delivery Order. |
 | Viewer | Hanya melihat. |
 
