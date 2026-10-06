@@ -171,6 +171,12 @@
       return u && u.active ? u : null;
     },
     async logout() { await sb.auth.signOut(); },
+    // Admin pertama (hanya jalan bila belum ada user; butuh BOOTSTRAP_KEY dari secret Edge Function)
+    async bootstrap(p) {
+      const res = await fetch(CFG.SUPABASE_URL + '/functions/v1/admin-users', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: CFG.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + CFG.SUPABASE_ANON_KEY }, body: JSON.stringify({ action: 'bootstrap', ...p }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j.error) throw new Error(j.error || 'Gagal (' + res.status + ')');
+    },
     async adminUser(action, p) {
       const { data, error } = await sb.functions.invoke('admin-users', { body: { action, ...p } });
       if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch (_) {} throw new Error(m); }

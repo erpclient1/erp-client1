@@ -98,6 +98,7 @@
         <div class="login-msg" id="lg-msg">${msg || ''}</div>
         <div class="keypad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button type="button" data-k="${n}">${n}</button>`).join('')}
           <button type="button" data-k="clr" class="sm" aria-label="Hapus semua">C</button><button type="button" data-k="0">0</button><button type="button" data-k="del" class="sm" aria-label="Hapus">${icon('backspace', 22)}</button></div>
+        ${DB.mode === 'supabase' ? '<a href="#" id="lg-boot" class="boot-link">Pertama kali? Buat akun admin</a>' : ''}
         ${DB.mode === 'local' ? `<div class="demo-hint">Mode DEMO · data di browser ini<br>admin/1111 · spv/2222 · gudang/3333 · viewer/4444</div>` : ''}
       </div></div>`;
     const dots = () => $$('#lg-dots i').forEach((d, i) => d.classList.toggle('on', i < pin.length));
@@ -129,6 +130,22 @@
       if (e.target.id === 'lg-user') { if (e.key === 'Enter') { e.preventDefault(); $('#lg-user').blur(); } return; }
       if (/^\d$/.test(e.key) && pin.length < 4) { pin += e.key; dots(); if (pin.length === 4) submit(); }
       else if (e.key === 'Backspace') { pin = pin.slice(0, -1); dots(); }
+    };
+    if ($('#lg-boot')) $('#lg-boot').onclick = (e) => {
+      e.preventDefault();
+      ERP.modal({
+        title: 'Buat akun admin pertama',
+        html: `<p class="note">Hanya bisa dipakai sekali, saat belum ada user. Isi <b>kunci bootstrap</b> yang Anda simpan sebagai secret <code>BOOTSTRAP_KEY</code> di Supabase.</p><div class="grid c2">
+          ${ERP.field('Kunci bootstrap', '<input name="key" type="password" autocomplete="off">', 'full')}
+          ${ERP.field('Username', '<input name="username" autocomplete="off" autocapitalize="off" value="admin">')}
+          ${ERP.field('Nama lengkap', '<input name="full_name" autocomplete="off">')}
+          ${ERP.field('PIN (4 digit)', '<input name="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="new-password">')}</div>`,
+        actions: [{ icon: 'check', tip: 'Buat admin', cls: 'primary', onClick: async (m) => {
+          const d = ERP.formData(m.el);
+          if (!d.key || !d.username || !d.full_name || !/^\d{4}$/.test(d.pin)) { ERP.toast('Lengkapi semua kolom (PIN 4 digit angka)', 'err'); return; }
+          try { await DB.bootstrap(d); m.close(); ERP.toast('Admin dibuat. Silakan login dengan username dan PIN tadi.'); $('#lg-user').value = d.username; } catch (err) { ERP.toast(err.message, 'err'); }
+        } }],
+      });
     };
     $('#lg-user').focus();
   }
