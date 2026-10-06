@@ -22,6 +22,19 @@
   ERP.itemRecord = (d) => ({ brand: d.brand, model: d.model, compound: d.compound || null, gender: d.gender || null, color: d.color || null, size: d.size || null, unit: d.unit });
   ERP.itemDup = (items, d, exceptId) => items.some((r) => r.id !== exceptId && ERP.itemKey(r) === ERP.itemKey(d) && (r.unit || '') === (d.unit || ''));
 
+  // Revisi master item => atribut pada baris PO dan DO yang memakai item ini ikut berubah (modul terhubung)
+  async function syncItem(id, rec) {
+    const A = ['brand', 'model', 'compound', 'gender', 'color', 'size', 'unit'];
+    try {
+      for (const t of ['po_items', 'do_items']) {
+        for (const r of await DB.list(t, { eq: { item_id: id } })) {
+          if (A.some((k) => (r[k] || null) !== (rec[k] || null))) await DB.update(t, r.id, Object.fromEntries(A.map((k) => [k, rec[k] || null])));
+        }
+      }
+      return '';
+    } catch (e) { return 'Item tersimpan, tetapi sebagian PO/DO belum ikut diperbarui: ' + e.message; }
+  }
+
   ERP.register('items', {
     async render(v) {
       let rows = await DB.list('items', { order: 'brand' });
@@ -46,7 +59,7 @@
           const d = ERP.formData(m.el);
           if (!d.brand || !d.model) { ERP.toast('Brand dan Model Name wajib diisi', 'err'); return; }
           if (ERP.itemDup(rows, d, (it || {}).id)) { ERP.toast('Item dengan kombinasi yang sama sudah ada', 'err'); return; }
-          try { const rec = ERP.itemRecord(d); if (it) await DB.update('items', it.id, rec); else await DB.insert('items', rec); m.close(); ERP.toast('Item disimpan'); reload(); } catch (e) { ERP.toast(e.message, 'err'); }
+          try { const rec = ERP.itemRecord(d); if (it) { await DB.update('items', it.id, rec); const warn = await syncItem(it.id, rec); if (warn) ERP.toast(warn, 'err'); } else await DB.insert('items', rec); m.close(); ERP.toast('Item disimpan'); reload(); } catch (e) { ERP.toast(e.message, 'err'); }
         } }],
       });
       const toRow = (i) => [i.brand, i.model, i.compound || '', i.gender || '', i.color || '', i.size || '', i.unit || ''];

@@ -60,8 +60,8 @@
       DB.list('delivery_orders', { order: 'do_date' }), DB.list('do_items'), DB.list('clients', { order: 'name' }), DB.list('payments', { order: 'pay_date' }), DB.list('payment_items'),
     ]);
     const pmtMap = Object.fromEntries(pmts.map((x) => [x.id, x]));
-    const paidByGr = {}, fpByPo = {};
-    pmi.forEach((x) => { paidByGr[x.gr_item_id] = (paidByGr[x.gr_item_id] || 0) + Number(x.amount); const f = (pmtMap[x.payment_id] || {}).fp_no; if (f) (fpByPo[x.po_id] = fpByPo[x.po_id] || new Set()).add(f); });
+    const paidByGr = {}, fpByPo = {}, invByPo = {};
+    pmi.forEach((x) => { paidByGr[x.gr_item_id] = (paidByGr[x.gr_item_id] || 0) + Number(x.amount); const f = (pmtMap[x.payment_id] || {}).fp_no; if (f) (fpByPo[x.po_id] = fpByPo[x.po_id] || new Set()).add(f); const iv = (pmtMap[x.payment_id] || {}).invoice_no; if (iv) (invByPo[x.po_id] = invByPo[x.po_id] || new Set()).add(iv); });
     const supMap = Object.fromEntries(sups.map((s) => [s.id, s])), userMap = Object.fromEntries(users.map((u) => [u.id, u])), cliMap = Object.fromEntries(clients.map((c) => [c.id, c]));
     const group = (arr, k) => arr.reduce((m, x) => ((m[x[k]] = m[x[k]] || []).push(x), m), {});
     const L = group(lines, 'po_id'), P = group(pays, 'po_id'), G = group(grs, 'po_id'), GI = group(gri, 'gr_id'), DOs = group(dos, 'po_id'), DI = group(doi, 'do_id');
@@ -75,6 +75,7 @@
       p.receipts = (G[p.id] || []).map((g) => ({ ...g, items: GI[g.id] || [] }));
       p.dos = DOs[p.id] || [];
       p.fpNos = [...(fpByPo[p.id] || [])];
+      p.invNos = [...(invByPo[p.id] || [])];
       const rc = {}, ou = {}, lastG = {};
       p.receipts.forEach((g) => g.items.forEach((i) => { add(rc, i.po_item_id, i.grade, i.qty); lastG[i.po_item_id + '|' + (i.grade === 'D' ? 'D' : 'G')] = g.gr_date; }));
       p.dos.forEach((d) => d.items.forEach((i) => add(ou, i.po_item_id, i.grade, i.qty)));

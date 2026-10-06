@@ -114,9 +114,9 @@
       const cur = sup[sp.s].currency;
       const ls = sp.lines.map(([i, q, p]) => ({ it: items[i], qty: q, price: p }));
       const c = ERP.calcPO(ls, 'pct', sp.disc || 0, !!sp.vat, !!sp.pph, 2, cur);
-      const seq = await DB.nextPoSeq(sup[sp.s].id, Number(sp.date.slice(0, 4)));
+      const seq = made.length + 1;
       const approved = canApprove && !sp.forcePending;
-      const [po] = await DB.insert('purchase_orders', D({ po_seq: seq, po_number: ERP.poNumber(seq, sp.date, sup[sp.s].company_code, ERP.divCode() || 'MAIN'), po_date: sp.date, est_date: ERP.addDays(sp.date, 14), supplier_id: sup[sp.s].id, currency: cur, fx_rate: sp.fx || null, payment_type: sp.pay, tempo_mode: sp.pay === 'tempo' ? (sp.tdate ? 'date' : 'days') : null, tempo_days: sp.days || null, tempo_date: sp.tdate || null, vat: !!sp.vat, pph23: !!sp.pph, pph23_rate: sp.pph ? 2 : null, pph23_amount: c.pphAmt, urgent: !!sp.urgent, discount_type: 'pct', discount_value: sp.disc || 0, subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, total: c.total, status: 'pending', revision: 0, notes: 'Data contoh' }));
+      const [po] = await DB.insert('purchase_orders', D({ po_number: ERP.coCode() + '-' + sup[sp.s].company_code + '-' + sp.date.replace(/-/g, '') + '-' + String(seq).padStart(2, '0'), po_date: sp.date, est_date: ERP.addDays(sp.date, 14), supplier_id: sup[sp.s].id, currency: cur, fx_rate: sp.fx || null, payment_type: sp.pay, tempo_mode: sp.pay === 'tempo' ? (sp.tdate ? 'date' : 'days') : null, tempo_days: sp.days || null, tempo_date: sp.tdate || null, vat: !!sp.vat, pph23: !!sp.pph, pph23_rate: sp.pph ? 2 : null, pph23_amount: c.pphAmt, urgent: !!sp.urgent, discount_type: 'pct', discount_value: sp.disc || 0, subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, total: c.total, status: 'pending', revision: 0, notes: 'Data contoh' }));
       const lines = await DB.insert('po_items', ls.map((l, n) => ({ po_id: po.id, line_no: n + 1, item_id: l.it.id, brand: l.it.brand, model: l.it.model, compound: l.it.compound, gender: l.it.gender, color: l.it.color, size: l.it.size, unit: l.it.unit, qty: l.qty, price: l.price })));
       made.push({ po, lines });
       if (!approved) continue;
@@ -136,7 +136,7 @@
         const base = ERP.sum(pay, (y) => y.w);
         if (!(base > 0)) continue;
         const amt = ERP.round(Math.min(ERP.round(c.total * f, cur), base), cur);
-        const [pm] = await DB.insert('payments', { supplier_id: sup[sp.s].id, currency: cur, fp_no: fpNo || null, pay_date: pd, amount: amt, bank: 'BCA (contoh)', note: 'Data contoh' });
+        const [pm] = await DB.insert('payments', { supplier_id: sup[sp.s].id, currency: cur, fp_no: fpNo || null, invoice_no: sp.inv ? sp.inv[0] : null, pay_date: pd, amount: amt, bank: 'BCA (contoh)', note: 'Data contoh' });
         await DB.insert('payment_items', pay.map((y) => ({ payment_id: pm.id, gr_item_id: y.x.id, po_id: po.id, amount: ERP.round((y.w * amt) / base, cur) })));
         await DB.insert('po_payments', { po_id: po.id, payment_id: pm.id, pay_date: pd, amount: amt, note: 'Pembayaran' + (fpNo ? ' FP ' + fpNo : '') + ' · BCA (contoh)' });
       }

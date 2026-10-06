@@ -176,6 +176,8 @@ function restrictDelete(t, row) {
   if (t === 'clients') used('delivery_orders', 'client_id', 'Client dipakai di Delivery Order');
   if (t === 'purchase_orders') used('delivery_orders', 'po_id', 'PO dipakai di Delivery Order');
   if (t === 'divisions') used('app_users', 'division_id', 'Divisi masih dipakai user');
+  if (t === 'goods_receipts') { const ids = new Set(store.gr_items.filter((x) => x.gr_id === row.id).map((x) => x.id)); if (store.payment_items.some((x) => ids.has(x.gr_item_id))) throw fail(400, 'Penerimaan sudah dibayar; hapus pembayaran terkait dulu'); }
+  if (t === 'gr_items' && store.payment_items.some((x) => x.gr_item_id === row.id)) throw fail(400, 'Baris penerimaan sudah dibayar; hapus pembayaran terkait dulu');
   if (t === 'suppliers') used('payments', 'supplier_id', 'Supplier dipakai di Pembayaran');
 }
 
@@ -183,6 +185,7 @@ function removeRow(t, id) {
   const i = store[t].findIndex((r) => r.id === id);
   if (i < 0) return;
   const row = store[t][i];
+  if (t === 'gr_items') restrictDelete(t, row);
   if (t === 'po_items') resetPOIfItemsChanged(row.po_id);
   store[t].splice(i, 1); del(t, id);
   (CASCADE[t] || []).forEach(([ct, col]) => store[ct].filter((r) => r[col] === id).forEach((r) => removeRow(ct, r.id)));
@@ -225,7 +228,7 @@ const ops = {
     return tx(() => {
       const row = { ...old, ...clone(b.patch || {}), id: old.id, created_at: old.created_at, updated_at: now() };
       if (t === 'purchase_orders') { row.po_seq = old.po_seq; row.created_by = old.created_by; guardPO(old, row, u); }
-      if (t === 'po_items') resetPOIfItemsChanged(old.po_id);
+      if (t === 'po_items' && (Number(row.qty) !== Number(old.qty) || Number(row.price) !== Number(old.price) || row.item_id !== old.item_id)) resetPOIfItemsChanged(old.po_id); // koreksi atribut item tidak mereset approval
       checkUnique(t, row);
       store[t][store[t].indexOf(old)] = row; put(t, row);
       return clone(row);

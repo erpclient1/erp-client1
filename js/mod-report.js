@@ -19,7 +19,7 @@
           const ds = dosOf(g), isG = g === 'G', rec = isG ? r.G : r.D, out = isG ? o.G : o.D;
           return {
             ...base, grade: g, custs: uniq(ds.map((d) => d.client.name)), doNos: uniq(ds.map((d) => d.do_number)),
-            inv: uniq(ds.map((d) => d.inv_no)), fp: uniq([...(p.fpNos || []), ...ds.map((d) => d.fp_no)]),
+            inv: uniq([...(p.invNos || []), ...ds.map((d) => d.inv_no)]), fp: uniq([...(p.fpNos || []), ...ds.map((d) => d.fp_no)]),
             poDate: p.po_date, rcvDate: p.lastRecv[i.id + '|' + g] || null,
             qtyPO: isG ? Number(i.qty) : null, recv: rec, short: isG ? Math.max(0, Number(i.qty) - r.G - r.D) : null, out,
             balReport: rec - out, balStock: rec - out,

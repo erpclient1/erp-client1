@@ -29,6 +29,79 @@
     ]);
   }
 
+  /* ---------- Revisi & hapus penerimaan ---------- */
+  const gkey = (id, grade) => id + '|' + (grade === 'D' ? 'D' : 'G');
+  // plan: Map(kunci -> qty baru pada penerimaan ini). Mengembalikan teks kesalahan atau '' bila aman.
+  function checkReceipt(p, data, g, plan) {
+    const f = Number(p.subtotal) > 0 ? Number(p.total) / Number(p.subtotal) : 1;
+    for (const i of p.items) {
+      for (const gr of ['G', 'D']) {
+        const other = ERP.sum(p.receipts.filter((r) => r.id !== g.id), (r) => ERP.sum(r.items.filter((x) => x.po_item_id === i.id && (x.grade === 'D' ? 'D' : 'G') === gr), (x) => Number(x.qty)));
+        const mine = plan.get(gkey(i.id, gr)) || 0;
+        const out = (p.ou[i.id] || { G: 0, D: 0 })[gr];
+        if (other + mine < out - 1e-9) return `${ERP.attrText(i)} (${gr}) sudah dikirim ${qty(out)} lewat Delivery Order, jadi total penerimaan tidak boleh kurang dari itu. Revisi/batalkan DO terkait dulu.`;
+      }
+    }
+    for (const x of g.items) {
+      const paid = data.paidByGr[x.id] || 0; if (!(paid > 0)) continue;
+      const it = p.items.find((i) => i.id === x.po_item_id) || {};
+      const payable = ERP.round((plan.get(gkey(x.po_item_id, x.grade)) || 0) * Number(it.price) * f, p.currency);
+      if (paid > payable + 0.005) return `${ERP.attrText(it)} sudah dibayar ${ERP.fmtMoney(paid, p.currency)}. Hapus/ubah pembayaran terkait di modul Pembayaran terlebih dulu.`;
+    }
+    return '';
+  }
+  async function deleteReceipt(p, data, g, onDone) {
+    const err = checkReceipt(p, data, g, new Map());
+    if (err) { ERP.toast(err, 'err'); return; }
+    if (!(await ERP.confirm(`Hapus penerimaan <b>SJ ${esc(g.delivery_note_no)}</b> (${fmtDate(g.gr_date)}) dari <b>${esc(p.po_number)}</b>?<br><small>Barang pada surat jalan ini dianggap <b>belum diterima</b>; status PO, Report, Stock, dan Pembayaran ikut menyesuaikan.</small>`, { danger: true }))) return;
+    try { await DB.remove('goods_receipts', g.id); ERP.toast('Penerimaan dihapus — data PO ikut diperbarui'); if (onDone) onDone(); ERP.refresh(); } catch (e) { ERP.toast(e.message, 'err'); }
+  }
+  function reviseModal(p, g, data, onDone) {
+    const mine = {}; g.items.forEach((x) => (mine[gkey(x.po_item_id, x.grade)] = Number(x.qty)));
+    const rows = p.items.map((i) => {
+      const other = ERP.sum(p.receipts.filter((r) => r.id !== g.id), (r) => ERP.sum(r.items.filter((x) => x.po_item_id === i.id), (x) => Number(x.qty)));
+      const maxq = Math.max(0, Number(i.qty) - other);
+      return `<tr data-id="${i.id}"><td data-label="Brand" class="mt"><b>${esc(i.brand)}</b></td><td data-label="Model">${esc(i.model)}</td><td data-label="Compound">${esc(i.compound)}</td><td data-label="Gender">${esc(i.gender)}</td><td data-label="Color">${esc(i.color)}</td><td data-label="Size">${esc(i.size)}</td>
+        <td data-label="Dipesan" class="n">${qty(i.qty)} ${esc(i.unit)}</td><td data-label="Surat jalan lain" class="n">${qty(other)}</td><td data-label="Maks" class="n">${qty(maxq)}</td>
+        <td data-label="Good (G)" class="n"><input class="gq g" inputmode="decimal" style="width:80px;text-align:right" value="${mine[gkey(i.id, 'G')] || 0}" data-max="${maxq}"></td>
+        <td data-label="Defect (D)" class="n"><input class="gq d" inputmode="decimal" style="width:80px;text-align:right" value="${mine[gkey(i.id, 'D')] || 0}"></td></tr>`;
+    }).join('');
+    ERP.modal({
+      title: 'Revisi Penerimaan — ' + esc(p.po_number) + ' · SJ ' + esc(g.delivery_note_no), wide: true,
+      html: `<div class="note" style="margin-bottom:8px">Ubah jumlah Good/Defect pada surat jalan ini. Data di PO, Report, Stock, dan Pembayaran otomatis mengikuti hasil revisi.</div>
+        <div class="tbl-wrap"><table class="tbl t3"><thead><tr><th>Brand</th><th>Model</th><th>Compound</th><th>Gender</th><th>Color</th><th>Size</th><th class="n">Dipesan</th><th class="n">SJ lain</th><th class="n">Maks</th><th class="n">Good (G)</th><th class="n">Defect (D)</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <div class="grid c3" style="margin-top:12px">${ERP.field('No Surat Jalan *', `<input name="delivery_note_no" value="${esc(g.delivery_note_no)}">`)}${ERP.field('Tanggal terima', ERP.dateInput('gr_date', g.gr_date))}${ERP.field('Diterima oleh *', `<input name="received_by" value="${esc(g.received_by)}">`)}</div>`,
+      actions: [{ icon: 'check', tip: 'Simpan revisi', cls: 'primary', onClick: async (m) => {
+        const d = ERP.formData(m.el);
+        if (!d.delivery_note_no) { ERP.toast('No surat jalan wajib diisi', 'err'); return; }
+        if (!d.received_by) { ERP.toast('Nama penerima wajib diisi', 'err'); return; }
+        if (!d.gr_date) { ERP.toast('Tanggal tidak valid', 'err'); return; }
+        const plan = new Map(); let bad = false;
+        ERP.$$('tr[data-id]', m.el).forEach((tr) => {
+          const gq = ERP.num($('.gq.g', tr).value), dq = ERP.num($('.gq.d', tr).value), max = Number($('.gq.g', tr).dataset.max);
+          if (gq < 0 || dq < 0 || gq + dq > max + 1e-9) bad = true;
+          if (gq > 0) plan.set(gkey(tr.dataset.id, 'G'), gq);
+          if (dq > 0) plan.set(gkey(tr.dataset.id, 'D'), dq);
+        });
+        if (bad) { ERP.toast('Good + Defect melebihi sisa pesanan (setelah dikurangi surat jalan lain)', 'err'); return; }
+        if (!plan.size) { ERP.toast('Semua qty nol. Untuk membatalkan penerimaan, gunakan tombol hapus.', 'err'); return; }
+        const err = checkReceipt(p, data, g, plan);
+        if (err) { ERP.toast(err, 'err'); return; }
+        try {
+          await DB.update('goods_receipts', g.id, { gr_date: d.gr_date, delivery_note_no: d.delivery_note_no, received_by: d.received_by });
+          for (const x of g.items) {
+            const k = gkey(x.po_item_id, x.grade), nq = plan.get(k) || 0;
+            if (nq <= 0) await DB.remove('gr_items', x.id); else if (nq !== Number(x.qty)) await DB.update('gr_items', x.id, { qty: nq });
+            plan.delete(k);
+          }
+          const add = [...plan.entries()].map(([k, q]) => { const [id, gr] = k.split('|'); return { gr_id: g.id, po_item_id: id, qty: q, grade: gr }; });
+          if (add.length) await DB.insert('gr_items', add);
+          m.close(); if (onDone) onDone(); ERP.toast('Revisi disimpan — data PO ikut diperbarui'); ERP.refresh();
+        } catch (e) { ERP.toast('Gagal menyimpan revisi: ' + e.message, 'err'); }
+      } }],
+    });
+  }
+
   function receiveModal(p) {
     const remain = p.items.map((i) => ({ ...i, got: p.recv[i.id] || 0, left: Math.max(0, Number(i.qty) - (p.recv[i.id] || 0)) })).filter((i) => i.left > 0);
     const rowsHTML = remain.map((i) => `<tr data-id="${i.id}"><td data-label="Brand" class="mt"><b>${esc(i.brand)}</b></td><td data-label="Model">${esc(i.model)}</td><td data-label="Compound">${esc(i.compound)}</td><td data-label="Gender">${esc(i.gender)}</td><td data-label="Color">${esc(i.color)}</td><td data-label="Size">${esc(i.size)}</td>
@@ -116,11 +189,16 @@
         else {
           const m = ERP.modal({
             title: 'Penerimaan — ' + esc(p.po_number), wide: true,
-            html: p.receipts.length ? p.receipts.map((g, n) => `<div class="card" style="margin-bottom:10px"><div class="page-head" style="margin:0 0 6px"><h3>${fmtDate(g.gr_date)} · SJ ${esc(g.delivery_note_no)}</h3>${btn('print', 'Print bukti penerimaan', `data-pr="${n}"`, 'sm')}</div><div class="note">Diterima oleh <b>${esc(g.received_by)}</b></div>${ERP.table([
+            html: p.receipts.length ? p.receipts.map((g, n) => `<div class="card" style="margin-bottom:10px"><div class="page-head" style="margin:0 0 6px"><h3>${fmtDate(g.gr_date)} · SJ ${esc(g.delivery_note_no)}</h3>${btn('print', 'Print bukti penerimaan', `data-pr="${n}"`, 'sm')}${canR ? btn('edit', 'Revisi penerimaan', `data-rv="${n}"`, 'sm') + btn('trash', 'Hapus penerimaan', `data-rd="${n}"`, 'sm danger') : ''}</div><div class="note">Diterima oleh <b>${esc(g.received_by)}</b></div>${ERP.table([
               { label: 'Brand', html: (x) => `<b>${esc((p.items.find((i) => i.id === x.po_item_id) || {}).brand)}</b>`, m: 'mt' }, ...['model', 'compound', 'gender', 'color', 'size'].map((k) => ({ label: k[0].toUpperCase() + k.slice(1), v: (x) => (p.items.find((i) => i.id === x.po_item_id) || {})[k] })),
               { label: 'G/D', html: (x) => ERP.badge(x.grade === 'D' ? 'D' : 'G', x.grade === 'D' ? 'err' : 'ok') }, { label: 'Qty', html: (x) => qty(x.qty) + ' ' + esc((p.items.find((i) => i.id === x.po_item_id) || {}).unit), cls: 'n' }], g.items)}</div>`).join('') : '<div class="empty">Belum ada penerimaan.</div>',
           });
-          m.el.addEventListener('click', (ev) => { const pb = ev.target.closest('[data-pr]'); if (pb) printGR(p, p.receipts[+pb.dataset.pr]); });
+          m.el.addEventListener('click', (ev) => {
+            const pb = ev.target.closest('[data-pr]'), rv = ev.target.closest('[data-rv]'), rd = ev.target.closest('[data-rd]');
+            if (pb) printGR(p, p.receipts[+pb.dataset.pr]);
+            else if (rv) reviseModal(p, p.receipts[+rv.dataset.rv], data, () => m.close());
+            else if (rd) deleteReceipt(p, data, p.receipts[+rd.dataset.rd], () => m.close());
+          });
         }
       };
     },
