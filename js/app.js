@@ -177,14 +177,29 @@
           <div class="top-r"><span class="who-m">${esc(ERP.user.full_name)}</span>
             ${adm.map((n) => `<a class="ibtn mob-only" href="#/${n[0]}" data-tip="${esc(n[1])}" aria-label="${esc(n[1])}">${icon(n[2])}</a>`).join('')}
             ${themeBtn()}${btn('logout', 'Keluar', 'id="btn-logout"')}</div></header>
+        <div id="chg" class="chg-banner" hidden></div>
         <main id="view" class="view"></main>
       </div>
       <nav class="bottom">${main.map((n) => link(n)).join('')}</nav></div>`;
-    $('#btn-logout').onclick = async () => { await DB.logout(); ERP.user = null; location.hash = ''; showLogin(); };
+    $('#btn-logout').onclick = async () => { if (ERP._unsub) { ERP._unsub(); ERP._unsub = null; } await DB.logout(); ERP.user = null; location.hash = ''; showLogin(); };
     window.onhashchange = route;
+    if (ERP._unsub) ERP._unsub();
+    ERP._unsub = DB.subscribe ? DB.subscribe(onRemoteChange) : null;
     if (!location.hash || location.hash === '#/' ) location.hash = '#/' + (main[0] ? main[0][0] : 'suppliers');
     route();
   }
+
+  // Peringatan: data diubah pengguna lain -> user perlu memuat ulang
+  function onRemoteChange() {
+    if ((ERP._w || 0) > 0 || Date.now() - (ERP.ownWriteAt || 0) < 3500) return; // perubahan dari diri sendiri
+    const el = $('#chg'); if (!el) return;
+    const editing = /\/(new|edit)/.test(location.hash);
+    el.innerHTML = `<span>${icon('alert', 18)}</span><span class="chg-msg"><b>Data telah diubah oleh pengguna lain.</b> ${editing ? 'Simpan isian Anda dulu, lalu muat ulang agar data terbaru tampil.' : 'Muat ulang agar data terbaru tampil.'}</span>${btn('reset', 'Muat ulang data', 'id="chg-reload"', 'primary')}<button type="button" class="chg-x" id="chg-close" aria-label="Tutup">×</button>`;
+    el.hidden = false;
+    $('#chg-reload').onclick = () => { el.hidden = true; ERP.refresh(); };
+    $('#chg-close').onclick = () => { el.hidden = true; };
+  }
+  const hideChange = () => { const el = $('#chg'); if (el) el.hidden = true; };
 
   async function route() {
     if (!ERP.user) return;
@@ -196,6 +211,7 @@
     $$('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === id));
     $('#page-title').textContent = nav[1];
     document.title = nav[1] + ' · ERP Pembelian';
+    hideChange();
     view.innerHTML = '<div class="loading">Memuat…</div>';
     window.scrollTo(0, 0);
     try { await ERP.modules[id].render(view, parts.slice(1)); }

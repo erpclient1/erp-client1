@@ -19,6 +19,7 @@
           const ds = dosOf(g), isG = g === 'G', rec = isG ? r.G : r.D, out = isG ? o.G : o.D;
           return {
             ...base, grade: g, custs: uniq(ds.map((d) => d.client.name)), doNos: uniq(ds.map((d) => d.do_number)),
+            sjNos: uniq(p.receipts.filter((rc) => rc.items.some((x) => x.po_item_id === i.id && (x.grade === 'D' ? 'D' : 'G') === g)).map((rc) => rc.delivery_note_no)),
             inv: uniq([...(p.invNos || []), ...ds.map((d) => d.inv_no)]), fp: uniq([...(p.fpNos || []), ...ds.map((d) => d.fp_no)]),
             poDate: p.po_date, rcvDate: p.lastRecv[i.id + '|' + g] || null,
             qtyPO: isG ? Number(i.qty) : null, recv: rec, short: isG ? Math.max(0, Number(i.qty) - r.G - r.D) : null, out,
@@ -44,6 +45,7 @@
       { label: 'Tanggal', v: (r) => fmtDate(dateOf(r)), cls: 'nw', k: (r) => fmtDate(dateOf(r)) },
       { label: 'Nama Supplier / Customer', html: partner, cls: 'sup', m: 'mf', k: partnerTxt },
       { label: 'No PO', v: (r) => r.poNo, cls: 'nw', m: 'mt', k: (r) => r.poNo },
+      { label: 'No SJ', v: (r) => r.sjNos.join(', '), k: (r) => r.sjNos.join(', ') },
       { label: 'No DO', v: (r) => r.doNos.join(', '), k: (r) => r.doNos.join(', ') },
       { label: 'No INV', v: (r) => r.inv.join(', '), m: 'mh', k: (r) => r.inv.join(', ') },
       { label: 'No FP', v: (r) => r.fp.join(', '), m: 'mh', k: (r) => r.fp.join(', ') },
@@ -59,10 +61,10 @@
   }
 
   function filterBar(prefix, S) {
-    return `<div class="toolbar">${ERP.searchBox('q', 'Cari supplier / customer / no PO / no DO / no INV / no FP / brand / model / compound / color / size…')}</div>
+    return `<div class="toolbar">${ERP.searchBox('q', 'Cari supplier / customer / no PO / no SJ / no DO / no INV / no FP / brand / model / compound / color / size…')}</div>
       <div class="filters"><div class="fld"><span>Dari tanggal</span>${ERP.dateInput('from', S.from)}</div><div class="fld"><span>Sampai tanggal</span>${ERP.dateInput('to', S.to)}</div>`;
   }
-  const searchText = (r) => [partnerTxt(r), r.poNo, r.doNos.join(' '), r.inv.join(' '), r.fp.join(' '), r.brand, r.model, r.compound, r.gender, r.color, r.size].join(' ').toLowerCase();
+  const searchText = (r) => [partnerTxt(r), r.poNo, r.sjNos.join(' '), r.doNos.join(' '), r.inv.join(' '), r.fp.join(' '), r.brand, r.model, r.compound, r.gender, r.color, r.size].join(' ').toLowerCase();
   const footTotals = (rows, kind) => {
     const g = rows.filter((r) => r.grade === 'G');
     return kind === 'report'

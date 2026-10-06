@@ -30,8 +30,9 @@ for (const r of db.prepare('SELECT tbl, json FROM docs').all()) if (store[r.tbl]
 
 const qPut = db.prepare('INSERT OR REPLACE INTO docs(tbl,id,json) VALUES(?,?,?)');
 const qDel = db.prepare('DELETE FROM docs WHERE tbl=? AND id=?');
-const put = (t, row) => qPut.run(t, row.id, JSON.stringify(row));
-const del = (t, id) => qDel.run(t, id);
+let rev = 0; // naik setiap ada perubahan data; dipakai klien untuk peringatan "data berubah"
+const put = (t, row) => { rev += 1; qPut.run(t, row.id, JSON.stringify(row)); };
+const del = (t, id) => { rev += 1; qDel.run(t, id); };
 let txDepth = 0;
 function reloadStore() { TABLES.forEach((t) => (store[t] = [])); for (const r of db.prepare('SELECT tbl, json FROM docs').all()) if (store[r.tbl]) store[r.tbl].push(JSON.parse(r.json)); }
 // transaksi (boleh bersarang); bila gagal, memori disamakan kembali dengan database
@@ -286,7 +287,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (!req.url.startsWith('/api/')) return serveStatic(req, res);
     const name = req.url.slice(5).split('?')[0];
-    if (name === 'ping') return send(res, 200, { erp: true });
+    if (name === 'ping') return send(res, 200, { erp: true, rev });
     if (req.method !== 'POST') return send(res, 405, { error: 'Metode tidak didukung' });
     const body = await readBody(req);
     if (name === 'login') { try { return send(res, 200, login(body.username, body.pin)); } catch (e) { return send(res, e.status || 500, { error: e.error || 'invalid', until: e.until }); } }

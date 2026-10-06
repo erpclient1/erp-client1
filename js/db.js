@@ -120,6 +120,8 @@
       }
       save();
     },
+    // perubahan dari tab/jendela lain (mode demo)
+    subscribe(cb) { const h = (e) => { if (e.key === KEY) cb(); }; window.addEventListener('storage', h); return () => window.removeEventListener('storage', h); },
     async reset() { localStorage.removeItem(KEY); sessionStorage.removeItem(SKEY); location.reload(); },
   };
 
@@ -189,6 +191,8 @@
       if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch (_) {} throw new Error(m); }
       if (data && data.error) throw new Error(data.error);
     },
+    // Supabase Realtime: ada perubahan data oleh pengguna lain
+    subscribe(cb) { const ch = sb.channel('erp-changes').on('postgres_changes', { event: '*', schema: 'public' }, () => cb()).subscribe(); return () => sb.removeChannel(ch); },
     async reset() { /* tidak berlaku di mode Supabase */ },
   };
 
@@ -224,6 +228,12 @@
     },
     async logout() { try { await this.call('logout'); } catch (_) {} this.token = null; try { localStorage.removeItem(TKEY); } catch (_) {} },
     adminUser(action, p) { return this.call('adminUser', { action, ...p }); },
+    // server lokal: cek penghitung revisi data tiap 8 detik
+    subscribe(cb) {
+      let last = null;
+      const tick = async () => { try { const j = await (await fetch('/api/ping', { cache: 'no-store' })).json(); if (last !== null && j.rev !== last) cb(); last = j.rev; } catch (_) { /* abaikan */ } };
+      tick(); const id = setInterval(tick, 8000); return () => clearInterval(id);
+    },
     async reset() {},
   };
 
@@ -236,6 +246,14 @@
     } catch (_) { /* bukan server ERP lokal */ }
     await cur.init();
   };
-  ERP.DB = new Proxy({}, { get: (_, k) => (k === 'init' ? choose : typeof cur[k] === 'function' ? cur[k].bind(cur) : cur[k]) });
+  // tulisan milik sendiri ditandai agar tidak memicu peringatan "data berubah"
+  const WRITES = ['insert', 'update', 'remove', 'removeBy', 'adminUser'];
+  ERP.DB = new Proxy({}, {
+    get: (_, k) => {
+      if (k === 'init') return choose;
+      if (WRITES.includes(k) && typeof cur[k] === 'function') return (...a) => { ERP._w = (ERP._w || 0) + 1; return Promise.resolve(cur[k](...a)).finally(() => { ERP._w -= 1; ERP.ownWriteAt = Date.now(); }); };
+      return typeof cur[k] === 'function' ? cur[k].bind(cur) : cur[k];
+    },
+  });
   ERP.MODS_ALL = MODS_ALL;
 })();

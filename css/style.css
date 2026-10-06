@@ -202,3 +202,8 @@ textarea{resize:vertical;min-height:60px}
  .tbl.rpt td{font-size:11.5px;overflow-wrap:anywhere}
 }
 .boot-link{text-align:center;font-size:12.5px;color:var(--muted)}
+
+.chg-banner{position:sticky;top:53px;z-index:19;display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--warn-soft);color:var(--warn);border-bottom:2px solid var(--warn);font-size:13.5px}
+.chg-banner[hidden]{display:none}.chg-banner .chg-msg{flex:1}.chg-banner .ibtn{background:var(--card)}
+.chg-x{background:none;border:none;font-size:22px;line-height:1;color:inherit;cursor:pointer;padding:0 4px}
+@media (max-width:760px){.chg-banner{top:49px;padding:8px 10px;font-size:12.5px}}

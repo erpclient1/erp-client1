@@ -550,3 +550,15 @@ begin
      and pg_trigger_depth() = 1;
   return null;
 end $$;
+
+-- ---------- Realtime: pengguna lain mendapat peringatan "data berubah" ----------
+do $$
+declare t text;
+begin
+  foreach t in array array['suppliers','clients','items','purchase_orders','po_items','po_payments','goods_receipts','gr_items','delivery_orders','do_items','payments','payment_items','divisions','banks','settings'] loop
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when duplicate_object then null;
+    end;
+  end loop;
+end $$;
