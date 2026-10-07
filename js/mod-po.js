@@ -245,7 +245,7 @@
         <div class="it"><input class="li-item" placeholder="Cari item…" value="${esc(l.brand)}" autocomplete="off"></div>
         <span class="at">${esc(l.model)}</span><span class="at">${esc(l.compound)}</span><span class="at">${esc(l.gender)}</span><span class="at">${esc(l.color)}</span><span class="at">${esc(l.size)}</span>
         <span class="at-all">${esc(ERP.attrText(l))}</span>
-        <div class="oo"><input class="li-ord" value="${esc(l.order_no)}" placeholder="No Order" autocomplete="off"></div>
+        <div class="oo"><input class="li-ord" value="${esc(l.order_no)}" placeholder="No Order (ketik / pilih SO)" autocomplete="off"></div>
         <div class="ed">${ERP.dateInput('line_est', l.est, `data-k="${l.k}"`)}</div>
         <div class="qt"><input class="li-qty r" inputmode="decimal" value="${l.qty}" ${l.recvd ? `title="Sudah diterima ${l.recvd}"` : ''}></div>
         <span class="un">${esc(l.unit)}</span>
@@ -256,6 +256,7 @@
         const l = st.lines.find((x) => String(x.k) === row.dataset.k);
         ERP.combo($('.li-item', row), (q) => { const n = norm(q); return items.filter((i) => !n || norm(ERP.attrText(i)).includes(n)).sort((a, b) => ERP.attrText(a).localeCompare(ERP.attrText(b), undefined, { numeric: true })).map((i) => ({ i, label: ERP.attrText(i), sub: i.unit })); }, (it) => { fillItem(l, it.i); drawLines(); });
         $('.li-ord', row).oninput = (e) => (l.order_no = e.target.value);
+        ERP.combo($('.li-ord', row), (q) => { const n = norm(q); return (data.sos || []).filter((s) => !n || norm(s.so_number).includes(n) || norm(s.client.name).includes(n)).map((s) => ({ s, label: s.so_number, sub: `${s.client.name} · ${fmtDate(s.so_date)}${s.status !== 'approved' ? ' · belum approved' : ''}` })); }, (it) => { l.order_no = it.s.so_number; $('.li-ord', row).value = it.s.so_number; });
         $('.li-qty', row).oninput = (e) => { l.qty = ERP.num(e.target.value); amt(row, l); totals(); };
         $('.li-price', row).oninput = (e) => { l.price = e.target.value === '' ? '' : ERP.num(e.target.value); amt(row, l); totals(); };
         amt(row, l);

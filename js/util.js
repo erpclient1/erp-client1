@@ -106,6 +106,8 @@
     reset: '<path d="M3 12a9 9 0 109-9 9 9 0 00-7 3.5M3 4v4h4"/>',
     layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5M3 17.5l9 5 9-5"/>',
     send: '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/>',
+    tag: '<path d="M3 12V3h9l9 9-9 9z"/><circle cx="8" cy="8" r="1.5"/>',
+    grid: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>',
   };
   ERP.icon = (n, s = 18) => `<svg class="ic" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n] || ''}</svg>`;
   // Tombol simbol; tulisan muncul saat di-hover (data-tip)
@@ -248,7 +250,7 @@
   ERP.attrText = (o) => [o.brand, o.model, o.compound, o.gender, o.color, o.size].filter(Boolean).join(' · ');
   ERP.itemKey = (o) => [o.brand, o.model, o.compound, o.gender, o.color, o.size].map((x) => String(x || '').trim().toLowerCase()).join('|');
   ERP.GENDERS = ['GS', 'Man', 'Woman', 'INF', 'PS', 'JR', 'KID'];
-  ERP.SIZES = ['1', '1T', '2', '2T', '3T', '4', '4T', '5', '5T', '6', '6T', '7', '7T', '8', '8T', '9', '9T', '10', '10T', '11', '11T', '12', '12T', '13', '13T', '14', '14T', '15', '15T', '16', '16T', '17', '17T', '18', '18T', '19', '19T', '20', '20T'];
+  ERP.SIZES = ['1', '1T', '2', '2T', '3', '3T', '4', '4T', '5', '5T', '6', '6T', '7', '7T', '8', '8T', '9', '9T', '10', '10T', '11', '11T', '12', '12T', '13', '13T', '14', '14T', '15', '15T', '16', '16T', '17', '17T', '18', '18T', '19', '19T', '20', '20T'];
   ERP.norm = (s) => String(s == null ? '' : s).toLowerCase();
 
   /* ---------- Excel ---------- */
@@ -269,6 +271,33 @@
       ws['!cols'] = sh.headers.map((h, i) => ({ wch: Math.min(40, Math.max(String(h).length + 2, ...sh.rows.slice(0, 50).map((r) => String(r[i] == null ? '' : r[i]).length + 2))) }));
       XLSX.utils.book_append_sheet(wb, ws, sh.name.slice(0, 30));
     });
+    XLSX.writeFile(wb, filename);
+  };
+  // Format "Report Balance": satu baris = Model + Color + No Order (per PO); kolom ukuran 1, 1T ... 20, 20T berisi qty diterima
+  ERP.BAL_SIZES = (() => { const a = []; for (let i = 1; i <= 20; i++) a.push(String(i), i + 'T'); return a; })();
+  ERP.balanceExport = (groups, filename, qtyHead = 'QTY PO') => {
+    if (!window.XLSX) { ERP.toast('Library Excel belum termuat (cek koneksi internet).', 'err'); return; }
+    if (!groups.length) { ERP.toast('Tidak ada data untuk diexport', 'err'); return; }
+    const SZ = ERP.BAL_SIZES, idx = Object.fromEntries(SZ.map((s, i) => [s, i])), ex = [];
+    groups.forEach((g) => Object.keys(g.sizes).forEach((s) => { if (!(s in idx) && !ex.includes(s)) ex.push(s); }));
+    const sizeCols = [...SZ, ...ex], S0 = 11, tc = S0 + sizeCols.length, bc = tc + 1;
+    const serial = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? (Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000 : null; };
+    const sorted = groups.slice().sort((a, b) => String(a.model).localeCompare(String(b.model), undefined, { numeric: true }) || String(a.color).localeCompare(String(b.color)) || String(a.orderNo).localeCompare(String(b.orderNo)));
+    const head = ['MODEL NAME', 'GENDER', 'Est Date', 'ETD', 'XFD', 'No Order Cust', 'COLOR', 'PO. DATE', 'PO Supplier', 'TYPE', qtyHead, ...sizeCols.map((s) => (/^\d+$/.test(s) ? Number(s) : s)), 'Total', 'balance'];
+    const aoa = [head, ...sorted.map((g) => [g.model, g.gender || '', serial(g.estDate), serial(g.etd), serial(g.xfd), g.orderNo || '', g.color || '', serial(g.poDate), g.poNo, g.type, g.qty, ...sizeCols.map((s) => (g.sizes[s] ? g.sizes[s] : null)), null, null])];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const L = XLSX.utils.encode_col;
+    sorted.forEach((g, n) => {
+      const r = n + 2;
+      [2, 3, 4, 7].forEach((c) => { const a = L(c) + r; if (ws[a] && ws[a].t === 'n') ws[a].z = 'dd-mmm-yy'; });
+      ws[L(tc) + r] = { t: 'n', f: `SUM(${L(S0)}${r}:${L(tc - 1)}${r})`, v: Object.values(g.sizes).reduce((x, y) => x + y, 0) };
+      ws[L(bc) + r] = { t: 'n', f: `${L(10)}${r}-${L(tc)}${r}`, v: g.qty - Object.values(g.sizes).reduce((x, y) => x + y, 0) };
+    });
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: bc } });
+    ws['!cols'] = [14, 8, 10, 10, 10, 16, 22, 10, 28, 8, 9, ...sizeCols.map(() => 5), 8, 9].map((w) => ({ wch: w }));
+    ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'report Balance');
     XLSX.writeFile(wb, filename);
   };
   ERP.pickFile = (accept = '.xlsx,.xls,.csv') => new Promise((res) => {

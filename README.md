@@ -113,3 +113,9 @@ supabase/schema.sql   tabel, RLS, trigger approval, fungsi PIN (sudah memuat rev
 supabase/migration_002.sql  migrasi untuk database yang sudah berjalan (divisi, pembayaran, nomor PO baru)
 supabase/functions/   pin-login, admin-users
 ```
+
+## Sales Order & Report Balance (07-Oct-26)
+- **Sales Order** (modul `so`): order dari client, bentuknya seperti PO (No SO manual, client, mata uang & pembayaran mengikuti data client, PPN, diskon, URGENT, approval Admin/Supervisor, edit → approval ulang). Kolom item: No – Brand – Model – Compound – Gender – Color – Size – Est Date – ETD – XFD – Qty – Satuan – Harga – Jumlah.
+- **Link ke PO:** kolom **No Order** pada baris PO bisa diketik manual atau dipilih dari daftar Sales Order. Hubungan SO ↔ PO = No Order sama dengan No SO + item master yang sama. SO yang sudah dipakai di PO tidak bisa dihapus / diganti nomornya.
+- **Stock:** tab baru *Rincian per SO*; tiap baris di 3 tab punya tombol export format **Report Balance** (kolom ukuran 1, 1T … 20, 20T = qty diterima, Total, balance), plus tombol export Report Balance untuk seluruh isi tab. TYPE = SALES bila No Order cocok dengan sebuah SO, selain itu SHTG.
+- Database: jalankan `supabase/migration_006.sql` (sudah dijalankan di proyek live). Edge Function `admin-users` perlu di-deploy ulang (daftar modul bertambah `so`).

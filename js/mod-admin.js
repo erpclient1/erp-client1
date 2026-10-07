@@ -233,7 +233,7 @@
       $('#d-backup').onclick = async () => {
         try {
           const out = { exported_at: new Date().toISOString(), mode: DB.mode };
-          for (const t of ['units', 'currencies', 'settings', 'suppliers', 'clients', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'delivery_orders', 'do_items', 'hist_purchases', 'app_users']) out[t] = await DB.list(t);
+          for (const t of ['units', 'currencies', 'settings', 'suppliers', 'clients', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'delivery_orders', 'do_items', 'sales_orders', 'so_items', 'hist_purchases', 'app_users']) out[t] = await DB.list(t);
           const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: 'application/json' })); a.download = 'backup_erp_' + ERP.today() + '.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
           ERP.toast('Backup diunduh');
         } catch (e) { ERP.toast('Backup gagal: ' + e.message, 'err'); }

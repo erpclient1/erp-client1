@@ -9,15 +9,15 @@
   /* ================= LOCAL ================= */
   const KEY = 'erp_local_db_v1';
   const SKEY = 'erp_local_session';
-  const TABLES = ['app_users', 'units', 'currencies', 'settings', 'suppliers', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'hist_purchases', 'clients', 'delivery_orders', 'do_items', 'divisions', 'banks', 'payments', 'payment_items'];
-  const CASCADE = { purchase_orders: [['po_items', 'po_id'], ['po_payments', 'po_id'], ['goods_receipts', 'po_id']], goods_receipts: [['gr_items', 'gr_id']], po_items: [['gr_items', 'po_item_id']], delivery_orders: [['do_items', 'do_id']], payments: [['payment_items', 'payment_id'], ['po_payments', 'payment_id']] };
-  const MODS_ALL = ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis', 'users', 'settings'];
+  const TABLES = ['app_users', 'units', 'currencies', 'settings', 'suppliers', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'hist_purchases', 'clients', 'delivery_orders', 'do_items', 'divisions', 'banks', 'payments', 'payment_items', 'sales_orders', 'so_items'];
+  const CASCADE = { sales_orders: [['so_items', 'so_id']], purchase_orders: [['po_items', 'po_id'], ['po_payments', 'po_id'], ['goods_receipts', 'po_id']], goods_receipts: [['gr_items', 'gr_id']], po_items: [['gr_items', 'po_item_id']], delivery_orders: [['do_items', 'do_id']], payments: [['payment_items', 'payment_id'], ['po_payments', 'payment_id']] };
+  const MODS_ALL = ['items', 'suppliers', 'clients', 'so', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis', 'users', 'settings'];
   ERP.ROLE_DEFAULT_MODS = {
     admin: MODS_ALL,
-    supervisor: ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis'],
+    supervisor: ['items', 'suppliers', 'clients', 'so', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis'],
     gudang: ['items', 'po', 'gr', 'do', 'report', 'stock'],
     finance: ['items', 'suppliers', 'po', 'gr', 'payment', 'report', 'stock'],
-    viewer: ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis'],
+    viewer: ['items', 'suppliers', 'clients', 'so', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis'],
   };
   let store = null;
   const save = () => localStorage.setItem(KEY, JSON.stringify(store));
@@ -65,7 +65,7 @@
         if (table === 'payments') row.created_by = row.created_by || (ERP.user && ERP.user.id);
         if (table === 'delivery_orders') row.created_by = row.created_by || (ERP.user && ERP.user.id);
         if (table === 'gr_items') row.grade = row.grade || 'G';
-        if (table === 'purchase_orders') { row.status = row.status || 'pending'; row.revision = row.revision || 0; row.created_by = row.created_by || (ERP.user && ERP.user.id); }
+        if (table === 'purchase_orders' || table === 'sales_orders') { row.status = row.status || 'pending'; row.revision = row.revision || 0; row.created_by = row.created_by || (ERP.user && ERP.user.id); }
         if (['po_payments', 'goods_receipts'].includes(table)) row.created_by = row.created_by || (ERP.user && ERP.user.id);
         store[table].push(row);
         return clone(row);

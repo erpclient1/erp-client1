@@ -10,7 +10,7 @@ const cors = {
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 const ROLES = ['admin', 'supervisor', 'gudang', 'finance', 'viewer'];
-const MODULES = ['items', 'suppliers', 'clients', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis', 'users', 'settings'];
+const MODULES = ['items', 'suppliers', 'clients', 'so', 'po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis', 'users', 'settings'];
 
 async function derivePassword(userId: string) {
   const secret = Deno.env.get('PIN_LOGIN_SECRET');

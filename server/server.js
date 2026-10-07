@@ -23,8 +23,8 @@ db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;
   CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id TEXT NOT NULL, exp INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS secrets(user_id TEXT PRIMARY KEY, salt TEXT NOT NULL, hash TEXT NOT NULL, failed INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0);`);
 
-const TABLES = ['app_users', 'units', 'currencies', 'settings', 'suppliers', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'hist_purchases', 'clients', 'delivery_orders', 'do_items', 'divisions', 'banks', 'payments', 'payment_items'];
-const CASCADE = { purchase_orders: [['po_items', 'po_id'], ['po_payments', 'po_id'], ['goods_receipts', 'po_id']], goods_receipts: [['gr_items', 'gr_id']], po_items: [['gr_items', 'po_item_id']], delivery_orders: [['do_items', 'do_id']], payments: [['payment_items', 'payment_id'], ['po_payments', 'payment_id']] };
+const TABLES = ['app_users', 'units', 'currencies', 'settings', 'suppliers', 'items', 'purchase_orders', 'po_items', 'po_payments', 'goods_receipts', 'gr_items', 'hist_purchases', 'clients', 'delivery_orders', 'do_items', 'divisions', 'banks', 'payments', 'payment_items', 'sales_orders', 'so_items'];
+const CASCADE = { sales_orders: [['so_items', 'so_id']], purchase_orders: [['po_items', 'po_id'], ['po_payments', 'po_id'], ['goods_receipts', 'po_id']], goods_receipts: [['gr_items', 'gr_id']], po_items: [['gr_items', 'po_item_id']], delivery_orders: [['do_items', 'do_id']], payments: [['payment_items', 'payment_id'], ['po_payments', 'payment_id']] };
 const store = Object.fromEntries(TABLES.map((t) => [t, []]));
 for (const r of db.prepare('SELECT tbl, json FROM docs').all()) if (store[r.tbl]) store[r.tbl].push(JSON.parse(r.json));
 
@@ -121,10 +121,12 @@ const canWrite = (u) => ['admin', 'supervisor'].includes(u.role);
 const canReceive = (u) => ['admin', 'supervisor', 'gudang'].includes(u.role);
 const canPay = (u) => ['admin', 'supervisor', 'finance'].includes(u.role) && has(u, 'payment');
 const PO_READ = ['po', 'gr', 'do', 'payment', 'report', 'stock', 'analysis'];
+const SO_READ = ['so', 'po', 'gr', 'do', 'report', 'stock', 'analysis'];
 const READ = {
   app_users: () => true, units: () => true, currencies: () => true, settings: () => true, suppliers: () => true, items: () => true, divisions: () => true, banks: () => true,
   payments: (u) => any(u, PO_READ), payment_items: (u) => any(u, PO_READ),
-  clients: (u) => any(u, ['clients', 'do']), purchase_orders: (u) => any(u, PO_READ), po_items: (u) => any(u, PO_READ), po_payments: (u) => any(u, ['po', 'payment', 'analysis']),
+  sales_orders: (u) => any(u, SO_READ), so_items: (u) => any(u, SO_READ),
+  clients: (u) => any(u, ['clients', 'do', 'so']), purchase_orders: (u) => any(u, PO_READ), po_items: (u) => any(u, PO_READ), po_payments: (u) => any(u, ['po', 'payment', 'analysis']),
   goods_receipts: (u) => any(u, ['po', 'gr', 'do', 'payment', 'report', 'stock']), gr_items: (u) => any(u, ['po', 'gr', 'do', 'payment', 'report', 'stock']),
   delivery_orders: (u) => any(u, ['do', 'report', 'stock']), do_items: (u) => any(u, ['do', 'report', 'stock']), hist_purchases: (u) => has(u, 'analysis'),
 };
@@ -133,6 +135,7 @@ const WRITE = {
   divisions: (u) => u.role === 'admin' && has(u, 'users'), banks: (u) => u.role === 'admin' && has(u, 'settings'), payments: (u) => canPay(u), payment_items: (u) => canPay(u),
   units: (u) => u.role === 'admin' && has(u, 'settings'), currencies: (u) => u.role === 'admin' && has(u, 'settings'), settings: (u) => u.role === 'admin' && has(u, 'settings'),
   suppliers: (u) => canWrite(u) && has(u, 'suppliers'), items: (u) => canWrite(u) && any(u, ['items', 'po']), clients: (u) => canWrite(u) && has(u, 'clients'),
+  sales_orders: (u) => canWrite(u) && has(u, 'so'), so_items: (u) => canWrite(u) && has(u, 'so'),
   purchase_orders: (u) => canWrite(u) && has(u, 'po'), po_items: (u) => canWrite(u) && has(u, 'po'), po_payments: (u, row) => (canWrite(u) && has(u, 'po')) || (canPay(u) && !!(row && row.payment_id)),
   goods_receipts: (u) => canReceive(u) && has(u, 'gr'), gr_items: (u) => canReceive(u) && has(u, 'gr'),
   delivery_orders: (u) => canReceive(u) && has(u, 'do'), do_items: (u) => canReceive(u) && has(u, 'do'), hist_purchases: (u) => canWrite(u) && has(u, 'analysis'),
@@ -147,7 +150,7 @@ function needWrite(u, t, row, isDelete) {
 }
 
 /* ---------------- Aturan data ---------------- */
-const UNIQUE = { delivery_orders: ['do_number'], purchase_orders: ['po_number'], suppliers: ['code', 'company_code'], divisions: ['code'], banks: ['name'], clients: ['code'], items: ['item_number'], units: ['name'], currencies: ['code'] };
+const UNIQUE = { sales_orders: ['so_number'], delivery_orders: ['do_number'], purchase_orders: ['po_number'], suppliers: ['code', 'company_code'], divisions: ['code'], banks: ['name'], clients: ['code'], items: ['item_number'], units: ['name'], currencies: ['code'] };
 const variantKey = (r) => ['brand', 'model', 'compound', 'gender', 'color', 'size', 'unit'].map((k) => String(r[k] || '').trim().toLowerCase()).join('|');
 function checkUnique(t, row) {
   for (const k of UNIQUE[t] || []) {
@@ -156,25 +159,30 @@ function checkUnique(t, row) {
   if (t === 'items' && store.items.some((r) => r.id !== row.id && variantKey(r) === variantKey(row))) throw fail(400, 'Item dengan kombinasi yang sama sudah ada');
 }
 const PO_CONTENT = ['po_date', 'supplier_id', 'currency', 'fx_rate', 'payment_type', 'tempo_mode', 'tempo_days', 'tempo_date', 'vat', 'pph23', 'pph23_rate', 'pph23_amount', 'urgent', 'discount_type', 'discount_value', 'subtotal', 'discount_amount', 'vat_amount', 'total', 'notes'];
+const SO_CONTENT = ['so_date', 'client_id', 'currency', 'fx_rate', 'payment_type', 'tempo_mode', 'tempo_days', 'vat', 'urgent', 'discount_type', 'discount_value', 'subtotal', 'discount_amount', 'vat_amount', 'total', 'notes'];
 const same = (a, b) => (a == null && b == null) || String(a) === String(b);
 
-function guardPO(old, row, user) {
+function guardPO(old, row, user, keys = PO_CONTENT) {
   if (!old) { Object.assign(row, { status: 'pending', approved_by: null, approved_at: null, revision: 0, created_by: user.id }); return; }
   if (row.status === 'approved' && old.status !== 'approved') {
     if (!['admin', 'supervisor'].includes(user.role)) throw fail(403, 'Hanya Admin atau Supervisor yang dapat meng-approve PO');
     row.approved_by = user.id; row.approved_at = now();
   }
-  if (old.status === 'approved' && row.status === 'approved' && PO_CONTENT.some((k) => !same(old[k], row[k]))) { row.status = 'pending'; row.revision = (old.revision || 0) + 1; }
+  if (old.status === 'approved' && row.status === 'approved' && keys.some((k) => !same(old[k], row[k]))) { row.status = 'pending'; row.revision = (old.revision || 0) + 1; }
   if (row.status === 'pending') { row.approved_by = null; row.approved_at = null; }
 }
 function resetPOIfItemsChanged(poId) {
   const p = store.purchase_orders.find((x) => x.id === poId);
   if (p && p.status === 'approved') { p.status = 'pending'; p.revision = (p.revision || 0) + 1; p.approved_by = null; p.approved_at = null; put('purchase_orders', p); }
 }
+function resetSOIfItemsChanged(soId) {
+  const p = store.sales_orders.find((x) => x.id === soId);
+  if (p && p.status === 'approved') { p.status = 'pending'; p.revision = (p.revision || 0) + 1; p.approved_by = null; p.approved_at = null; put('sales_orders', p); }
+}
 function restrictDelete(t, row) {
   const used = (tbl, col, msg) => { if (store[tbl].some((r) => r[col] === row.id)) throw fail(400, msg); };
   if (t === 'suppliers') used('purchase_orders', 'supplier_id', 'Supplier dipakai di PO');
-  if (t === 'clients') used('delivery_orders', 'client_id', 'Client dipakai di Delivery Order');
+  if (t === 'clients') { used('delivery_orders', 'client_id', 'Client dipakai di Delivery Order'); used('sales_orders', 'client_id', 'Client dipakai di Sales Order'); }
   if (t === 'purchase_orders') {
     used('delivery_orders', 'po_id', 'PO dipakai di Delivery Order');
     if (!row.is_dummy) { // pembersihan data contoh boleh menghapus PO beserta turunannya
@@ -194,6 +202,7 @@ function removeRow(t, id) {
   const row = store[t][i];
   if (t === 'gr_items') restrictDelete(t, row);
   if (t === 'po_items') resetPOIfItemsChanged(row.po_id);
+  if (t === 'so_items') resetSOIfItemsChanged(row.so_id);
   store[t].splice(i, 1); del(t, id);
   (CASCADE[t] || []).forEach(([ct, col]) => store[ct].filter((r) => r[col] === id).forEach((r) => removeRow(ct, r.id)));
 }
@@ -221,7 +230,9 @@ const ops = {
       if (t === 'suppliers' && row.company_code) row.company_code = String(row.company_code).toUpperCase();
       if (t === 'gr_items' || t === 'do_items') row.grade = row.grade === 'D' ? 'D' : 'G';
       if (t === 'purchase_orders') guardPO(null, row, u);
+      if (t === 'sales_orders') guardPO(null, row, u, SO_CONTENT);
       if (t === 'po_items') resetPOIfItemsChanged(row.po_id);
+      if (t === 'so_items') resetSOIfItemsChanged(row.so_id);
       checkUnique(t, row);
       store[t].push(row); put(t, row);
       return clone(row);
@@ -235,6 +246,8 @@ const ops = {
     return tx(() => {
       const row = { ...old, ...clone(b.patch || {}), id: old.id, created_at: old.created_at, updated_at: now() };
       if (t === 'purchase_orders') { row.po_seq = old.po_seq; row.created_by = old.created_by; guardPO(old, row, u); }
+      if (t === 'sales_orders') { row.created_by = old.created_by; guardPO(old, row, u, SO_CONTENT); }
+      if (t === 'so_items' && (Number(row.qty) !== Number(old.qty) || Number(row.price) !== Number(old.price) || row.item_id !== old.item_id)) resetSOIfItemsChanged(old.so_id);
       if (t === 'po_items' && (Number(row.qty) !== Number(old.qty) || Number(row.price) !== Number(old.price) || row.item_id !== old.item_id)) resetPOIfItemsChanged(old.po_id); // koreksi atribut item tidak mereset approval
       checkUnique(t, row);
       store[t][store[t].indexOf(old)] = row; put(t, row);

@@ -8,7 +8,7 @@
   ERP.modules = {};
   ERP.register = (id, def) => (ERP.modules[id] = def);
   const NAV = [
-    ['items', 'Master Item', 'box'], ['suppliers', 'Supplier', 'building'], ['clients', 'Client', 'user'], ['po', 'Purchase Order', 'cart'],
+    ['items', 'Master Item', 'box'], ['suppliers', 'Supplier', 'building'], ['clients', 'Client', 'user'], ['so', 'Sales Order', 'tag'], ['po', 'Purchase Order', 'cart'],
     ['gr', 'Goods Received', 'truck'], ['do', 'Delivery Order', 'send'], ['payment', 'Pembayaran', 'wallet'], ['report', 'Report', 'list'], ['stock', 'Stock', 'layers'],
     ['analysis', 'Analisa', 'chart'], ['users', 'Pengguna', 'users'], ['settings', 'Pengaturan', 'gear'],
   ];
@@ -54,10 +54,11 @@
 
   /* ---------- Loader PO + turunan (dipakai PO, GR, DO, Report, Stock, Analisa) ---------- */
   ERP.loadPO = async () => {
-    const [pos, lines, pays, grs, gri, sups, users, items, dos, doi, clients, pmts, pmi] = await Promise.all([
+    const [pos, lines, pays, grs, gri, sups, users, items, dos, doi, clients, pmts, pmi, sos, soi] = await Promise.all([
       DB.list('purchase_orders', { order: 'po_date', desc: true }), DB.list('po_items', { order: 'line_no' }), DB.list('po_payments', { order: 'pay_date' }),
       DB.list('goods_receipts', { order: 'gr_date' }), DB.list('gr_items'), DB.list('suppliers', { order: 'name' }), DB.list('app_users'), DB.list('items', { order: 'brand' }),
       DB.list('delivery_orders', { order: 'do_date' }), DB.list('do_items'), DB.list('clients', { order: 'name' }), DB.list('payments', { order: 'pay_date' }), DB.list('payment_items'),
+      DB.list('sales_orders', { order: 'so_date', desc: true }), DB.list('so_items', { order: 'line_no' }),
     ]);
     const pmtMap = Object.fromEntries(pmts.map((x) => [x.id, x]));
     const paidByGr = {}, fpByPo = {}, invByPo = {};
@@ -92,7 +93,26 @@
       if (p.fullyPaid) { let acc = 0; for (const x of p.payments) { acc += Number(x.amount); if (acc >= Number(p.total) - 0.005) { p.paidDate = x.pay_date; break; } } }
       p.lastRecvDate = p.receipts.length ? p.receipts[p.receipts.length - 1].gr_date : null;
     });
-    return { pos, sups, items, users, supMap, userMap, dos, clients, cliMap, payments: pmts, payItems: pmi, paidByGr, pmtMap };
+    /* Sales Order: terhubung ke baris PO lewat "No Order" (= No SO) + item yang sama */
+    const soBy = group(soi, 'so_id'), poByOrder = {};
+    pos.forEach((p) => p.items.forEach((i) => { const k = String(i.order_no || '').trim().toLowerCase(); if (k) (poByOrder[k] = poByOrder[k] || []).push({ p, i }); }));
+    sos.sort((a, b) => String(b.so_date).localeCompare(String(a.so_date)) || String(b.so_number).localeCompare(String(a.so_number)));
+    sos.forEach((s) => {
+      s.client = cliMap[s.client_id] || { name: '(dihapus)' };
+      s.items = (soBy[s.id] || []).sort((a, b) => a.line_no - b.line_no);
+      s.poLinks = poByOrder[String(s.so_number).trim().toLowerCase()] || [];
+      s.items.forEach((it) => {
+        it.poLines = s.poLinks.filter(({ i }) => (i.item_id && i.item_id === it.item_id) || ERP.itemKey(i) === ERP.itemKey(it));
+        let g = 0, d = 0, out = 0, pq = 0;
+        it.poLines.forEach(({ p, i }) => { const r = p.rc[i.id] || { G: 0, D: 0 }, o = p.ou[i.id] || { G: 0, D: 0 }; g += r.G; d += r.D; out += o.G + o.D; pq += Number(i.qty); });
+        it.recvG = g; it.recvD = d; it.recv = g + d; it.out = out; it.poQty = pq;
+      });
+      s.ordered = ERP.sum(s.items, (i) => Number(i.qty));
+      s.received = ERP.sum(s.items, (i) => Math.min(Number(i.qty), i.recv));
+      s.allReceived = s.items.length > 0 && s.items.every((i) => i.recv >= Number(i.qty));
+      s.stage = s.status !== 'approved' ? 'pending' : s.allReceived ? 'done' : 'active';
+    });
+    return { pos, sups, items, users, supMap, userMap, dos, clients, cliMap, payments: pmts, payItems: pmi, paidByGr, pmtMap, sos, soByNo: Object.fromEntries(sos.map((s) => [String(s.so_number).trim().toLowerCase(), s])) };
   };
 
   /* ---------- Login ---------- */
