@@ -573,3 +573,9 @@ end $$;
 alter table payments add column if not exists pay_currency text;
 alter table payments add column if not exists pay_amount   numeric(18,4);
 alter table payments add column if not exists pay_rate     numeric(18,6);   -- IDR per 1 mata uang asing
+
+
+-- ============ REVISI 005 (07-Oct-26): No Order Customer + No Order / Est Date per baris item ============
+alter table purchase_orders add column if not exists customer_order_no text;
+alter table po_items add column if not exists order_no text;
+alter table po_items add column if not exists est_date date;
