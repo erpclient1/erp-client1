@@ -121,3 +121,4 @@ supabase/functions/   pin-login, admin-users
 - Database: jalankan `supabase/migration_006.sql` (sudah dijalankan di proyek live). Edge Function `admin-users` perlu di-deploy ulang (daftar modul bertambah `so`).
 
 - **Import Excel (07-Oct-26):** Master Item, Supplier, Client (sudah ada) dan **Purchase Order** (tombol Import + Unduh template di daftar PO). Import PO: satu baris Excel = satu item; baris dengan No PO sama digabung; supplier & item harus sudah ada di database; PO bermasalah dilewati dengan alasan; hasil berstatus Menunggu Approval.
+- **Import SO:** tombol Import + Unduh template di daftar Sales Order (client harus sudah ada; cara kerja sama dengan import PO).

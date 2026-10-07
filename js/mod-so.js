@@ -82,13 +82,93 @@
     ]);
   }
 
+  /* ---------- Import SO dari Excel ---------- */
+  // Satu baris Excel = satu baris item. Baris dengan No SO sama digabung jadi satu SO (data header cukup diisi di baris pertama).
+  const SO_HEAD = ['No SO', 'Tanggal SO', 'Client', 'Rate IDR', 'PPN', 'Diskon', 'Jenis Diskon', 'URGENT', 'Catatan', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'Est Date', 'ETD', 'XFD', 'Qty', 'Harga'];
+  const SO_SAMPLE = [
+    ['SO-CONTOH-001', '05-Jan-26', 'PT Contoh Client', 16300, 'YA', 0, '%', 'TIDAK', 'Contoh catatan', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '9', '20-Feb-26', '06-Mar-26', '27-Mar-26', 100, 25],
+    ['', '', '', '', '', '', '', '', '', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '10', '20-Feb-26', '06-Mar-26', '27-Mar-26', 150, 25],
+  ];
+  function parseSOImport(rows, data) {
+    const yes = (v) => ['ya', 'yes', 'y', '1', 'true', 'x'].includes(norm(String(v ?? '').trim()));
+    const cliBy = new Map(); data.clients.forEach((c) => [c.name, c.code].forEach((k) => k && cliBy.set(norm(k).trim(), c)));
+    const itemBy = new Map(); data.items.forEach((i) => { const k = ERP.itemKey(i); if (!itemBy.has(k)) itemBy.set(k, i); });
+    const existing = new Set(data.sos.map((s) => norm(s.so_number).trim()));
+    const groups = new Map(); let last = null;
+    rows.forEach((r, n) => {
+      const g = (...k) => String(ERP.pick(r, ...k) ?? '').trim();
+      const no = g('no so', 'so', 'nomor so') || last;
+      if (!no) return;
+      last = no;
+      const k = norm(no).trim();
+      if (!groups.has(k)) groups.set(k, { no, rows: [] });
+      groups.get(k).rows.push({ r, g, line: n + 2 });
+    });
+    const out = [];
+    groups.forEach((G) => {
+      const errs = [], first = (...k) => { for (const x of G.rows) { const v = x.g(...k); if (v) return v; } return ''; };
+      const raw = (k) => { for (const x of G.rows) { const v = ERP.pick(x.r, k); if (v !== '' && v != null) return v; } return ''; };
+      if (existing.has(norm(G.no).trim())) errs.push('No SO sudah ada di sistem');
+      const date = ERP.toISO(raw('tanggal so') || raw('tanggal')); if (!date) errs.push('Tanggal SO kosong / tidak valid');
+      const cli = cliBy.get(norm(first('client', 'nama client', 'id client')).trim()); if (!cli) errs.push(`Client "${first('client', 'nama client', 'id client')}" tidak ditemukan di database Client`);
+      const cur = cli ? cli.currency || 'IDR' : 'IDR';
+      const fx = cur !== 'IDR' ? ERP.num(raw('rate idr') || raw('rate')) : 0;
+      const vat = yes(first('ppn', 'ppn 11%')), dv = ERP.num(raw('diskon') || 0), dt = /nilai|amt|rp|usd/i.test(first('jenis diskon')) ? 'amt' : 'pct';
+      const lines = [];
+      G.rows.forEach(({ r, g, line }) => {
+        const rec = { brand: g('brand'), model: g('model', 'model name'), compound: g('compound', 'compound name'), gender: g('gender'), color: g('color', 'colour'), size: g('size') };
+        if (!rec.brand && !rec.model) return;
+        const gm = ERP.GENDERS.find((x) => x.toLowerCase() === rec.gender.toLowerCase()); if (gm) rec.gender = gm;
+        const sz = ERP.SIZES.find((x) => x.toLowerCase() === rec.size.toLowerCase()); if (sz) rec.size = sz;
+        const it = itemBy.get(ERP.itemKey(rec));
+        const q = ERP.num(ERP.pick(r, 'qty', 'jumlah')), pr = ERP.pick(r, 'harga', 'harga satuan', 'price'), price = ERP.num(pr);
+        if (!it) { errs.push(`Baris Excel ${line}: item "${ERP.attrText(rec)}" tidak ada di Master Item`); return; }
+        if (!(q > 0)) { errs.push(`Baris Excel ${line}: Qty harus > 0`); return; }
+        if (pr === '' || pr == null || price < 0) { errs.push(`Baris Excel ${line}: Harga kosong / tidak valid (boleh 0)`); return; }
+        lines.push({ item_id: it.id, brand: it.brand, model: it.model, compound: it.compound || null, gender: it.gender || null, color: it.color || null, size: it.size || null, unit: it.unit, est_date: ERP.toISO(ERP.pick(r, 'est date', 'est. date')) || null, etd: ERP.toISO(ERP.pick(r, 'etd')) || null, xfd: ERP.toISO(ERP.pick(r, 'xfd')) || null, qty: q, price });
+      });
+      if (!lines.length && !errs.length) errs.push('Tidak ada baris item');
+      const c = calc(lines, dt, dv, vat, cur);
+      out.push({ no: G.no, date, cli, cur, errs, lines, total: c.total, hdr: cli && date ? {
+        so_number: G.no, so_date: date, client_id: cli.id, currency: cur, fx_rate: fx || null, ...termOf(cli), vat, urgent: yes(first('urgent')),
+        discount_type: dt, discount_value: dv, subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, total: c.total, notes: first('catatan', 'notes') || null } : null });
+    });
+    return out;
+  }
+  async function importSOs(data) {
+    const f = await ERP.pickFile(); if (!f) return;
+    let list;
+    try { list = parseSOImport(await ERP.xlsxRead(f), data); } catch (e) { ERP.toast('File tidak bisa dibaca: ' + e.message, 'err'); return; }
+    if (!list.length) { ERP.toast('Tidak ada data di file. Gunakan template (kolom No SO, Client, Brand, Model, Qty, Harga).', 'err'); return; }
+    const good = list.filter((x) => !x.errs.length), bad = list.filter((x) => x.errs.length);
+    const okTbl = good.length ? ERP.table([{ label: 'No SO', html: (x) => `<b>${esc(x.no)}</b>`, m: 'mt' }, { label: 'Tanggal', v: (x) => fmtDate(x.date), cls: 'nw' }, { label: 'Client', v: (x) => x.cli.name }, { label: 'Baris item', v: (x) => x.lines.length, cls: 'n' }, { label: 'Total', html: (x) => fmtMoney(x.total, x.cur), cls: 'n nw' }], good.map((x, i) => ({ ...x, id: 'g' + i }))) : '';
+    const errBox = bad.length ? `<div class="sec-t">Tidak bisa diimport (${bad.length} SO)</div>${bad.map((x) => `<div class="note"><b>${esc(x.no)}</b><br>${x.errs.map((e) => '• ' + esc(e)).join('<br>')}</div>`).join('')}` : '';
+    ERP.modal({
+      title: 'Import Sales Order dari Excel', wide: true,
+      html: `<div class="note">${good.length} SO siap diimport${bad.length ? `, ${bad.length} SO bermasalah akan dilewati (perbaiki di Excel lalu import lagi — SO yang sudah masuk tidak akan terduplikasi)` : ''}. SO hasil import berstatus <b>Menunggu Approval</b>.</div>${okTbl}${errBox}`,
+      actions: good.length ? [{ icon: 'check', tip: `Import ${good.length} SO`, cls: 'primary', onClick: async (m) => {
+        let n = 0; const fails = [];
+        for (const x of good) {
+          let id = null;
+          try {
+            const [so] = await DB.insert('sales_orders', { ...x.hdr, status: 'pending', revision: 0 }); id = so.id;
+            await DB.insert('so_items', x.lines.map((l, i) => ({ ...l, so_id: id, line_no: i + 1 }))); n++;
+          } catch (e) { fails.push(x.no + ': ' + e.message); if (id) { try { await DB.remove('sales_orders', id); } catch (_) {} } }
+        }
+        m.close(); S.tab = 'pending';
+        ERP.toast(`${n} SO diimport${fails.length ? ', gagal: ' + fails.join('; ') : ''}`, fails.length ? 'err' : undefined);
+        ERP.refresh();
+      } }] : [],
+    });
+  }
+
   /* ---------- Daftar ---------- */
   async function renderList(v) {
     const data = await ERP.loadPO();
     const canW = ERP.can.write();
     const matches = (s) => !S.q || norm(s.so_number).includes(S.q) || norm(s.client.name).includes(S.q) || s.items.some((i) => norm(ERP.attrText(i)).includes(S.q));
     v.innerHTML = `<div class="toolbar">${ERP.searchBox('q', 'Cari client / brand / model / compound / color / size / no SO…')}
-      <div class="tb-actions">${canW ? btn('plus', 'Buat Sales Order baru', 'id="b-new"', 'primary') : ''}${btn('print', 'Print daftar', 'id="b-prt"')}${btn('download', 'Export ke Excel', 'id="b-exp"')}</div></div>
+      <div class="tb-actions">${canW ? btn('plus', 'Buat Sales Order baru', 'id="b-new"', 'primary') + btn('upload', 'Import SO dari Excel', 'id="b-imp"') + btn('template', 'Unduh template import SO', 'id="b-tpl"') : ''}${btn('print', 'Print daftar', 'id="b-prt"')}${btn('download', 'Export ke Excel', 'id="b-exp"')}</div></div>
       <div class="tabs" id="tabs"></div><div id="list"></div>`;
     $('#q').value = S.q;
     const bar = (a, b, ok) => `<div class="bar ${ok ? 'ok' : ''}"><i style="width:${b > 0 ? Math.min(100, (a / b) * 100) : 0}%"></i></div>`;
@@ -118,6 +198,8 @@
     $('#q').oninput = ERP.debounce((e) => { S.q = norm(e.target.value.trim()); draw(); });
     $('#tabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { S.tab = b.dataset.t; draw(); } };
     if ($('#b-new')) $('#b-new').onclick = () => (location.hash = '#/so/new');
+    if ($('#b-imp')) $('#b-imp').onclick = () => importSOs(data);
+    if ($('#b-tpl')) $('#b-tpl').onclick = () => ERP.xlsxExport('Template_Import_SO.xlsx', 'SO', SO_HEAD, SO_SAMPLE);
     $('#b-prt').onclick = () => ERP.printTable('Daftar Sales Order — ' + STAGES.find((x) => x[0] === S.tab)[1], [{ label: 'No SO', v: (s) => s.so_number }, { label: 'Tanggal', v: (s) => fmtDate(s.so_date) }, { label: 'Client', v: (s) => s.client.name }, { label: 'Total', num: true, v: (s) => fmtMoney(s.total, s.currency) }, { label: 'Approval', v: (s) => (s.status === 'approved' ? 'Approved' : 'Menunggu') }, { label: 'Diterima', v: (s) => qty(s.received) + '/' + qty(s.ordered) }], draw.rows);
     $('#b-exp').onclick = () => exportSOs(draw.rows, 'SO_' + ERP.today() + '.xlsx');
     $('#list').onclick = (e) => {
