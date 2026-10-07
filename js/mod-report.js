@@ -4,11 +4,14 @@
   const { $, esc, btn, norm, fmtDate } = ERP;
   const qty = (n) => (n == null ? '-' : ERP.fmtNum(n, Number.isInteger(+n) ? 0 : 2));
   const uniq = (a) => [...new Set(a.filter(Boolean))];
-  const R = { q: '', from: null, to: null, status: 'all' };
+  const R = { q: '', from: null, to: null, status: 'all', pay: 'all' };
   const T = { q: '', from: null, to: null, tab: 'po', only: false };
 
   // Satu baris = satu varian pada satu PO, dipisah per Good (G) / Defect (D)
-  function ledger(pos) {
+  const PAY_TXT = { paid: 'Sudah Dibayar', partial: 'Dibayar Sebagian', unpaid: 'Belum Dibayar' };
+  const payBadge = (r) => ERP.badge(PAY_TXT[r.payStatus], { paid: 'ok', partial: 'warn', unpaid: 'mut' }[r.payStatus]);
+  function ledger(pos, paidByGr) {
+    paidByGr = paidByGr || {};
     const rows = [];
     pos.filter((p) => p.status === 'approved').forEach((p) => {
       p.items.forEach((i) => {
@@ -17,8 +20,13 @@
         const base = { poId: p.id, poNo: p.po_number, supplier: p.supplier.name, brand: i.brand, model: i.model, compound: i.compound, gender: i.gender, color: i.color, size: i.size, unit: i.unit };
         const mk = (g) => {
           const ds = dosOf(g), isG = g === 'G', rec = isG ? r.G : r.D, out = isG ? o.G : o.D;
+          // status pembayaran per baris: nilai bayar penerimaan (qty x harga x total/subtotal PO) vs yang sudah dibayar
+          const fac = Number(p.subtotal) > 0 ? Number(p.total) / Number(p.subtotal) : 1;
+          const grs = p.receipts.flatMap((rc) => rc.items.filter((x) => x.po_item_id === i.id && (x.grade === 'D' ? 'D' : 'G') === g));
+          const payable = ERP.round(ERP.sum(grs, (x) => Number(x.qty) * Number(i.price) * fac), p.currency), paid = ERP.round(ERP.sum(grs, (x) => paidByGr[x.id] || 0), p.currency);
+          const payStatus = payable > 0.005 && paid >= payable - 0.005 ? 'paid' : paid > 0.005 ? 'partial' : 'unpaid';
           return {
-            ...base, grade: g, custs: uniq(ds.map((d) => d.client.name)), doNos: uniq(ds.map((d) => d.do_number)),
+            ...base, payable, paid, payStatus, grade: g, custs: uniq(ds.map((d) => d.client.name)), doNos: uniq(ds.map((d) => d.do_number)),
             sjNos: uniq(p.receipts.filter((rc) => rc.items.some((x) => x.po_item_id === i.id && (x.grade === 'D' ? 'D' : 'G') === g)).map((rc) => rc.delivery_note_no)),
             inv: uniq([...(p.invNos || []), ...ds.map((d) => d.inv_no)]), fp: uniq([...(p.fpNos || []), ...ds.map((d) => d.fp_no)]),
             poDate: p.po_date, rcvDate: p.lastRecv[i.id + '|' + g] || null,
@@ -57,6 +65,7 @@
         : [{ label: 'Qty In', v: (r) => qty(r.recv), cls: 'n', k: (r) => r.recv }]),
       { label: 'Qty Out', v: (r) => qty(r.out), cls: 'n', k: (r) => r.out },
       { label: 'Balance', html: (r) => `<b>${qty(rep ? r.balReport : r.balStock)}</b>`, cls: 'n', k: (r) => (rep ? r.balReport : r.balStock) },
+      ...(rep ? [{ label: 'Status Bayar', html: payBadge, cls: 'nw', k: (r) => PAY_TXT[r.payStatus] }] : []),
     ];
   }
 
@@ -76,20 +85,22 @@
   ERP.register('report', {
     async render(v) {
       const data = await ERP.loadPO();
-      const all = ledger(data.pos);
+      const all = ledger(data.pos, data.paidByGr);
       if (!R.from) R.from = ERP.today().slice(0, 4) + '-01-01';
       if (!R.to) R.to = ERP.today();
       v.innerHTML = filterBar('r', R) + `<div class="fld"><span>Status penerimaan</span><select id="f-st"><option value="all">Semua</option><option value="short">Belum lengkap diterima (ada Kurang)</option><option value="full">Sudah lengkap diterima</option></select></div>
+        <div class="fld"><span>Status pembayaran</span><select id="f-pay"><option value="all">Semua</option><option value="paid">Sudah Dibayar</option><option value="partial">Dibayar Sebagian</option><option value="unpaid">Belum Dibayar</option></select></div>
         <div class="tb-actions" style="margin-left:auto">${btn('download', 'Export ke Excel', 'id="b-exp"')}${btn('print', 'Print', 'id="b-prt"')}</div></div><div id="list"></div><div class="note" id="foot"></div>
-        <div class="note">Satu baris = satu varian pada satu PO. <b>Qty Out</b> = barang keluar lewat Delivery Order. <b>Balance</b> = Qty Diterima − Qty Out. <b>Kurang</b> = Qty PO − (Good + Defect yang sudah diterima).</div>`;
-      $('#q').value = R.q; $('#f-st').value = R.status;
+        <div class="note">Satu baris = satu varian pada satu PO. <b>Qty Out</b> = barang keluar lewat Delivery Order. <b>Balance</b> = Qty Diterima − Qty Out. <b>Kurang</b> = Qty PO − (Good + Defect yang sudah diterima). <b>Status Bayar</b> mengikuti nilai barang yang sudah diterima: Sudah Dibayar / Dibayar Sebagian / Belum Dibayar (baris yang belum diterima dianggap Belum Dibayar).</div>`;
+      $('#q').value = R.q; $('#f-st').value = R.status; $('#f-pay').value = R.pay;
       const cols = colsFor('report');
-      const rowsNow = () => all.filter((r) => r.poDate >= R.from && r.poDate <= R.to && (!R.q || searchText(r).includes(R.q)) && (R.status === 'all' || (R.status === 'short' ? r.short > 0 : r.grade === 'G' && r.short === 0)));
+      const rowsNow = () => all.filter((r) => r.poDate >= R.from && r.poDate <= R.to && (!R.q || searchText(r).includes(R.q)) && (R.status === 'all' || (R.status === 'short' ? r.short > 0 : r.grade === 'G' && r.short === 0)) && (R.pay === 'all' || r.payStatus === R.pay));
       let cur = [];
       const draw = () => { cur = rowsNow(); $('#list').innerHTML = ERP.table(cols.map((c) => ({ ...c, label: c.label })), cur.map((r, i) => ({ ...r, id: r.poId + i })), { empty: 'Tidak ada data pada periode/filter ini.', cls: 'rpt t3', limit: 1000 }); $('#foot').innerHTML = cur.length ? footTotals(cur, 'report') : ''; };
       draw();
       $('#q').oninput = ERP.debounce((e) => { R.q = norm(e.target.value.trim()); draw(); });
       $('#f-st').onchange = (e) => { R.status = e.target.value; draw(); };
+      $('#f-pay').onchange = (e) => { R.pay = e.target.value; draw(); };
       v.onchange = (e) => { if (e.target.name === 'from') R.from = ERP.parseDate(e.target.value) || R.from; if (e.target.name === 'to') R.to = ERP.parseDate(e.target.value) || R.to; if (e.target.name === 'from' || e.target.name === 'to') draw(); };
       $('#b-exp').onclick = () => ERP.xlsxExport(`Report_${R.from}_${R.to}.xlsx`, 'Report', cols.map((c) => c.label), cur.map((r) => cols.map((c) => c.k(r))));
       $('#b-prt').onclick = () => ERP.printTable('Report PO — Penerimaan & Keluar', cols.map((c, i) => ({ label: c.label, num: (c.cls || '').includes('n'), v: (r) => c.k(r) })), cur, `Periode ${fmtDate(R.from)} s/d ${fmtDate(R.to)}`);
@@ -100,7 +111,7 @@
   ERP.register('stock', {
     async render(v) {
       const data = await ERP.loadPO();
-      const all = ledger(data.pos).filter((r) => r.recv > 0);
+      const all = ledger(data.pos, data.paidByGr).filter((r) => r.recv > 0);
       if (!T.from) T.from = ERP.today().slice(0, 4) + '-01-01';
       if (!T.to) T.to = ERP.today();
       v.innerHTML = filterBar('t', T) + `<label class="chk" style="padding-bottom:8px"><input type="checkbox" id="f-only"> Hanya stok &gt; 0</label>

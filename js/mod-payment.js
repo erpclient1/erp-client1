@@ -28,18 +28,45 @@
     if (sel.some((l) => l.po.currency !== cur)) { ERP.toast('Baris terpilih memakai mata uang berbeda; pilih satu mata uang saja', 'err'); return; }
     const total = ERP.round(ERP.sum(sel, (l) => l.left), cur), dec = ERP.decimals(cur);
     const pos = [...new Set(sel.map((l) => l.po.po_number))];
+    // mata uang pembayaran: mata uang PO, atau IDR (bila PO valas) / USD (bila PO IDR); kurs = IDR per 1 mata uang asing
+    const payCurs = [cur, ...(cur === 'IDR' ? ['USD'] : ['IDR']).filter((c) => ERP.curMap[c])];
+    const defRate = cur !== 'IDR' ? Number(sel[0].po.fx_rate) || '' : '';
+    const toPay = (v, pc, rate) => (pc === cur ? v : cur === 'IDR' ? v / rate : v * rate);   // mata uang PO -> mata uang bayar
+    const toPo = (v, pc, rate) => (pc === cur ? v : cur === 'IDR' ? v * rate : v / rate);    // mata uang bayar -> mata uang PO
     const bank = ERP.banks.length ? `<select name="bank">${ERP.options(ERP.banks.map((b) => b.name), '', null, null, '— pilih bank asal —')}</select>` : '<input name="bank" placeholder="Nama bank asal (atau tambah daftar bank di Pengaturan)">';
     ERP.modal({
       title: 'Input FP & Pembayaran — ' + esc(sup.name), wide: true,
+      onMount: (m) => {
+        const q = (n) => m.el.querySelector(n), selc = q('[name=pay_cur]'), rate = q('[name=rate]'), amt = q('[name=amount]'); let edited = false;
+        const F = () => (cur !== 'IDR' ? cur : selc.value);
+        const sync = (resetAmt) => {
+          const pc = selc.value, r = ERP.num(rate.value), diff = pc !== cur;
+          q('#rate-wrap').style.display = diff ? '' : 'none'; q('#rate-lbl').textContent = 'Kurs (IDR per 1 ' + F() + ') *';
+          if (resetAmt && !edited) amt.value = diff ? (r > 0 ? ERP.round(toPay(total, pc, r), pc).toFixed(ERP.decimals(pc)) : '') : total.toFixed(dec);
+          const A = ERP.num(amt.value);
+          q('#eq-note').textContent = diff && r > 0 && A > 0 ? `Setara ${fmtMoney(Math.min(ERP.round(toPo(A, pc, r), cur), total), cur)} dari sisa tagihan ${fmtMoney(total, cur)}` : `Sisa tagihan: ${fmtMoney(total, cur)}`;
+        };
+        selc.onchange = () => { edited = false; sync(true); }; rate.oninput = () => sync(true); amt.oninput = () => { edited = true; sync(false); };
+        sync(false);
+      },
       html: `<dl class="kv" style="margin-bottom:10px"><dt>Barang dipilih</dt><dd>${sel.length} baris · ${pos.length} PO (${esc(pos.join(', '))})</dd><dt>Total sisa tagihan</dt><dd><b>${fmtMoney(total, cur)}</b></dd></dl>
         <div class="grid c2">${ERP.field('No Faktur Pajak (FP)', '<input name="fp_no" placeholder="mis. 010.000-26.00000001 (kosongkan bila tidak ada)">')}${ERP.field('No Invoice', '<input name="invoice_no" placeholder="No invoice dari supplier (opsional)">')}${ERP.field('Tanggal Pembayaran *', ERP.dateInput('pay_date', ERP.today()))}
-        ${ERP.field('Jumlah (' + cur + ') *', `<input name="amount" inputmode="decimal" value="${total.toFixed(dec)}">`)}${ERP.field('Bank Asal *', bank)}
+        ${ERP.field('Mata uang pembayaran *', `<select name="pay_cur">${payCurs.map((c) => `<option value="${c}">${c}${c === cur ? ' (mata uang PO)' : ''}</option>`).join('')}</select>`)}
+        <label class="fld" id="rate-wrap" style="display:none"><span id="rate-lbl"></span><input name="rate" inputmode="decimal" value="${defRate || ''}"></label>
+        ${ERP.field('Jumlah dibayar *', `<input name="amount" inputmode="decimal" value="${total.toFixed(dec)}">`)}${ERP.field('Bank Asal *', bank)}
+        <div class="note full" id="eq-note"></div>
         ${ERP.field('Catatan', '<input name="note">', 'full')}</div>
         <div class="note" style="margin-top:8px">Jumlah boleh lebih kecil dari total (pembayaran sebagian); nilainya dibagi proporsional ke baris terpilih. Setelah disimpan, status pembayaran di PO terkait ikut terisi otomatis.</div>`,
       actions: [{ icon: 'check', tip: 'Simpan pembayaran', cls: 'primary', onClick: async (m) => {
-        const d = ERP.formData(m.el); const A = ERP.round(ERP.num(d.amount), cur);
+        const d = ERP.formData(m.el);
+        const payCur = d.pay_cur || cur, rateV = ERP.num(d.rate), Apay = ERP.round(ERP.num(d.amount), payCur);
         if (!d.pay_date) { ERP.toast('Tanggal pembayaran wajib diisi', 'err'); return; }
-        if (!(A > 0)) { ERP.toast('Jumlah harus lebih dari 0', 'err'); return; }
+        if (payCur !== cur && !(rateV > 0)) { ERP.toast('Isi kurs (IDR per 1 ' + (cur !== 'IDR' ? cur : payCur) + ')', 'err'); return; }
+        if (!(Apay > 0)) { ERP.toast('Jumlah harus lebih dari 0', 'err'); return; }
+        // nilai setara dalam mata uang PO; bila jumlah = pelunasan penuh (selisih pembulatan), dianggap lunas tepat
+        const fullPay = ERP.round(toPay(total, payCur, rateV), payCur), tol = Math.pow(10, -ERP.decimals(payCur)) * 1.01;
+        const A = payCur === cur ? ERP.round(Apay, cur) : Math.abs(Apay - fullPay) <= tol ? total : ERP.round(toPo(Apay, payCur, rateV), cur);
+        if (!(A > 0)) { ERP.toast('Jumlah terlalu kecil', 'err'); return; }
         if (A > total + 0.005) { ERP.toast('Jumlah melebihi total sisa tagihan', 'err'); return; }
         if (!d.bank) { ERP.toast('Pilih / isi Bank Asal', 'err'); return; }
         // bagi jumlah ke baris terpilih (proporsional terhadap sisa)
@@ -48,10 +75,10 @@
         if (Math.abs(diff) > 0) { const last = alloc.reduce((b, x) => (x.l.left - x.a > b.l.left - b.a ? x : b), alloc[0]); last.a = ERP.round(last.a + diff, cur); }
         alloc = alloc.filter((x) => x.a > 0);
         try {
-          const [pm] = await DB.insert('payments', { supplier_id: sup.id, currency: cur, fp_no: d.fp_no || null, invoice_no: d.invoice_no || null, pay_date: d.pay_date, amount: A, bank: d.bank, note: d.note || null });
+          const [pm] = await DB.insert('payments', { supplier_id: sup.id, currency: cur, fp_no: d.fp_no || null, invoice_no: d.invoice_no || null, pay_date: d.pay_date, amount: A, pay_currency: payCur, pay_amount: Apay, pay_rate: payCur !== cur ? rateV : null, bank: d.bank, note: d.note || null });
           await DB.insert('payment_items', alloc.map((x) => ({ payment_id: pm.id, gr_item_id: x.l.id, po_id: x.l.po.id, amount: x.a })));
           const byPo = {}; alloc.forEach((x) => (byPo[x.l.po.id] = (byPo[x.l.po.id] || 0) + x.a));
-          await DB.insert('po_payments', Object.entries(byPo).map(([poId, amt]) => ({ po_id: poId, payment_id: pm.id, pay_date: d.pay_date, amount: ERP.round(amt, cur), note: 'Pembayaran' + (d.invoice_no ? ' Inv ' + d.invoice_no : '') + (d.fp_no ? ' FP ' + d.fp_no : '') + ' · ' + d.bank })));
+          await DB.insert('po_payments', Object.entries(byPo).map(([poId, amt]) => ({ po_id: poId, payment_id: pm.id, pay_date: d.pay_date, amount: ERP.round(amt, cur), note: 'Pembayaran' + (d.invoice_no ? ' Inv ' + d.invoice_no : '') + (d.fp_no ? ' FP ' + d.fp_no : '') + ' · ' + d.bank + (payCur !== cur ? ` · dibayar ${payCur} ${ERP.fmtNum(Apay, ERP.decimals(payCur))} @ ${ERP.fmtNum(rateV, 2)}` : '') })));
           m.close(); ERP.toast('Pembayaran disimpan — status di PO terkait diperbarui'); ERP.refresh();
         } catch (e) { ERP.toast('Gagal menyimpan: ' + e.message, 'err'); }
       } }],
@@ -83,7 +110,7 @@
       ];
       const histCols = [
         { label: 'Tanggal', v: (x) => fmtDate(x.pay_date), cls: 'nw', m: 'mt' }, { label: 'Supplier', v: (x) => (supMap[x.supplier_id] || {}).name || '-' }, { label: 'No FP', v: (x) => x.fp_no || '-' }, { label: 'No Invoice', v: (x) => x.invoice_no || '-' },
-        { label: 'Jumlah', html: (x) => fmtMoney(x.amount, x.currency), cls: 'n nw' }, { label: 'Bank Asal', v: (x) => x.bank }, { label: 'Catatan', v: (x) => x.note || '', cls: 'hide-md', m: 'mh' },
+        { label: 'Jumlah', html: (x) => fmtMoney(x.amount, x.currency) + (x.pay_currency && x.pay_currency !== x.currency ? `<small>dibayar ${esc(x.pay_currency)} ${ERP.fmtNum(x.pay_amount, ERP.decimals(x.pay_currency))} @ ${ERP.fmtNum(x.pay_rate, 2)}</small>` : ''), cls: 'n nw' }, { label: 'Bank Asal', v: (x) => x.bank }, { label: 'Catatan', v: (x) => x.note || '', cls: 'hide-md', m: 'mh' },
         { label: 'PO', v: (x) => [...new Set(data.payItems.filter((i) => i.payment_id === x.id).map((i) => (data.pos.find((p) => p.id === i.po_id) || {}).po_number))].join(', '), m: 'mf' },
         { label: '', cls: 'act', html: (x) => btn('eye', 'Lihat rincian', `data-pv="${x.id}"`, 'sm') + (canPay ? btn('trash', 'Hapus pembayaran', `data-pd="${x.id}"`, 'sm danger') : '') },
       ];
@@ -120,7 +147,7 @@
         if (pv) {
           const x = data.payments.find((y) => y.id === pv.dataset.pv);
           const items = data.payItems.filter((i) => i.payment_id === x.id);
-          ERP.modal({ title: 'Rincian pembayaran', wide: true, html: `<dl class="kv"><dt>Supplier</dt><dd>${esc((supMap[x.supplier_id] || {}).name)}</dd><dt>Tanggal</dt><dd>${fmtDate(x.pay_date)}</dd><dt>No FP</dt><dd>${esc(x.fp_no) || '-'}</dd><dt>No Invoice</dt><dd>${esc(x.invoice_no) || '-'}</dd><dt>Jumlah</dt><dd><b>${fmtMoney(x.amount, x.currency)}</b></dd><dt>Bank asal</dt><dd>${esc(x.bank)}</dd><dt>Catatan</dt><dd>${esc(x.note) || '-'}</dd></dl><div class="sec-t">Barang yang dibayar</div>${ERP.table(
+          ERP.modal({ title: 'Rincian pembayaran', wide: true, html: `<dl class="kv"><dt>Supplier</dt><dd>${esc((supMap[x.supplier_id] || {}).name)}</dd><dt>Tanggal</dt><dd>${fmtDate(x.pay_date)}</dd><dt>No FP</dt><dd>${esc(x.fp_no) || '-'}</dd><dt>No Invoice</dt><dd>${esc(x.invoice_no) || '-'}</dd><dt>Jumlah (nilai PO)</dt><dd><b>${fmtMoney(x.amount, x.currency)}</b></dd>${x.pay_currency && x.pay_currency !== x.currency ? `<dt>Dibayar dalam</dt><dd>${esc(x.pay_currency)} ${ERP.fmtNum(x.pay_amount, ERP.decimals(x.pay_currency))} · kurs ${ERP.fmtNum(x.pay_rate, 2)}</dd>` : ''}<dt>Bank asal</dt><dd>${esc(x.bank)}</dd><dt>Catatan</dt><dd>${esc(x.note) || '-'}</dd></dl><div class="sec-t">Barang yang dibayar</div>${ERP.table(
             [{ label: 'No PO', v: (i) => (data.pos.find((p) => p.id === i.po_id) || {}).po_number, cls: 'nw', m: 'mt' }, { label: 'Barang', v: (i) => { const g = lineOf(i.gr_item_id); return g ? ERP.attrText(g.item) + ' · ' + g.grade : '-'; }, m: 'mf' }, { label: 'No Surat Jalan', v: (i) => (lineOf(i.gr_item_id) || {}).sj || '' }, { label: 'Dibayar', html: (i) => fmtMoney(i.amount, x.currency), cls: 'n' }], items)}` });
         } else if (pd) {
           if (!(await ERP.confirm('Hapus pembayaran ini? Status bayar di PO terkait ikut dibatalkan.', { danger: true }))) return;
@@ -138,7 +165,7 @@
           const det = [];
           pl.forEach((x) => data.payItems.filter((i) => i.payment_id === x.id).forEach((i) => { const po = data.pos.find((p) => p.id === i.po_id) || {}; const g = lineOf(i.gr_item_id) || { item: {} }; det.push([fmtDate(x.pay_date), (supMap[x.supplier_id] || {}).name, x.fp_no || '', x.invoice_no || '', x.bank, po.po_number, g.sj || '', g.item.brand, g.item.model, g.item.compound || '', g.item.gender || '', g.item.color || '', g.item.size || '', g.grade, Number(i.amount), x.currency]); }));
           ERP.xlsxExportMulti('Pembayaran_' + ERP.today() + '.xlsx', [
-            { name: 'Pembayaran', headers: ['Tanggal', 'Supplier', 'No FP', 'No Invoice', 'Jumlah', 'Mata Uang', 'Bank Asal', 'Catatan'], rows: pl.map((x) => [fmtDate(x.pay_date), (supMap[x.supplier_id] || {}).name, x.fp_no || '', x.invoice_no || '', Number(x.amount), x.currency, x.bank, x.note || '']) },
+            { name: 'Pembayaran', headers: ['Tanggal', 'Supplier', 'No FP', 'No Invoice', 'Jumlah (nilai PO)', 'Mata Uang PO', 'Mata Uang Bayar', 'Jumlah Dibayar', 'Kurs', 'Bank Asal', 'Catatan'], rows: pl.map((x) => [fmtDate(x.pay_date), (supMap[x.supplier_id] || {}).name, x.fp_no || '', x.invoice_no || '', Number(x.amount), x.currency, x.pay_currency || x.currency, Number(x.pay_amount != null ? x.pay_amount : x.amount), x.pay_rate || '', x.bank, x.note || '']) },
             { name: 'Rincian Barang', headers: ['Tanggal Bayar', 'Supplier', 'No FP', 'No Invoice', 'Bank Asal', 'No PO', 'No Surat Jalan', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'G/D', 'Jumlah Dibayar', 'Mata Uang'], rows: det },
           ]);
         } else {
