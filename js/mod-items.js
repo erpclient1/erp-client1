@@ -63,7 +63,7 @@
         } }],
       });
       const toRow = (i) => [i.brand, i.model, i.compound || '', i.gender || '', i.color || '', i.size || '', i.unit || ''];
-      const exportFile = (tpl) => ERP.xlsxExport(tpl ? 'Template_Item.xlsx' : 'Item_' + ERP.today() + '.xlsx', 'Item', HEAD, tpl ? [] : filtered().map(toRow));
+      const exportFile = (tpl) => ERP.xlsxExport(tpl ? 'Template_Item.xlsx' : 'Item_' + ERP.today() + '.xlsx', 'Item', HEAD, tpl ? [['Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '9', 'PRS']] : filtered().map(toRow));
       if ($('#b-add')) $('#b-add').onclick = () => openForm(null);
       $('#b-exp').onclick = () => exportFile(false);
       if ($('#b-tpl')) $('#b-tpl').onclick = () => exportFile(true);

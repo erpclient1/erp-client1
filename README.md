@@ -119,3 +119,5 @@ supabase/functions/   pin-login, admin-users
 - **Link ke PO:** kolom **No Order** pada baris PO bisa diketik manual atau dipilih dari daftar Sales Order. Hubungan SO ↔ PO = No Order sama dengan No SO + item master yang sama. SO yang sudah dipakai di PO tidak bisa dihapus / diganti nomornya.
 - **Stock:** tab baru *Rincian per SO*; tiap baris di 3 tab punya tombol export format **Report Balance** (kolom ukuran 1, 1T … 20, 20T = qty diterima, Total, balance), plus tombol export Report Balance untuk seluruh isi tab. TYPE = SALES bila No Order cocok dengan sebuah SO, selain itu SHTG.
 - Database: jalankan `supabase/migration_006.sql` (sudah dijalankan di proyek live). Edge Function `admin-users` perlu di-deploy ulang (daftar modul bertambah `so`).
+
+- **Import Excel (07-Oct-26):** Master Item, Supplier, Client (sudah ada) dan **Purchase Order** (tombol Import + Unduh template di daftar PO). Import PO: satu baris Excel = satu item; baris dengan No PO sama digabung; supplier & item harus sudah ada di database; PO bermasalah dilewati dengan alasan; hasil berstatus Menunggu Approval.

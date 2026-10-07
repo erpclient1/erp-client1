@@ -122,13 +122,97 @@
     ]);
   }
 
+  /* ---------- Import PO dari Excel ---------- */
+  // Satu baris Excel = satu baris item. Baris dengan No PO sama digabung jadi satu PO (data header cukup diisi di baris pertama).
+  const PO_HEAD = ['No PO', 'Tanggal PO', 'Supplier', 'Pembayaran', 'Tempo (hari)', 'Rate IDR', 'PPN', 'PPh 23 (%)', 'Diskon', 'Jenis Diskon', 'URGENT', 'Catatan', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'No Order', 'Est Date', 'Qty', 'Harga'];
+  const PO_SAMPLE = [
+    ['PO-CONTOH-001', '05-Jan-26', 'PT Contoh Supplier', 'Tempo', 30, 16300, 'YA', '', 5, '%', 'TIDAK', 'Contoh catatan', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '9', 'SO-001', '20-Feb-26', 100, 18.5],
+    ['', '', '', '', '', '', '', '', '', '', '', '', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '10', 'SO-001', '20-Feb-26', 150, 18.5],
+  ];
+  function parsePOImport(rows, data) {
+    const yes = (v) => ['ya', 'yes', 'y', '1', 'true', 'x'].includes(norm(String(v ?? '').trim()));
+    const supBy = new Map(); data.sups.forEach((s) => [s.name, s.code, s.company_code].forEach((k) => k && supBy.set(norm(k).trim(), s)));
+    const itemBy = new Map(); data.items.forEach((i) => { const k = ERP.itemKey(i); if (!itemBy.has(k)) itemBy.set(k, i); });
+    const existing = new Set(data.pos.map((p) => norm(p.po_number).trim()));
+    const groups = new Map(); let last = null;
+    rows.forEach((r, n) => {
+      const g = (...k) => String(ERP.pick(r, ...k) ?? '').trim();
+      const no = g('no po', 'po', 'nomor po') || last;
+      if (!no) return;                       // baris kosong
+      last = no;
+      const k = norm(no).trim();
+      if (!groups.has(k)) groups.set(k, { no, rows: [] });
+      groups.get(k).rows.push({ r, g, line: n + 2 });
+    });
+    const out = [];
+    groups.forEach((G) => {
+      const errs = [], first = (...k) => { for (const x of G.rows) { const v = x.g(...k); if (v) return v; } return ''; };
+      const raw = (k) => { for (const x of G.rows) { const v = ERP.pick(x.r, k); if (v !== '' && v != null) return v; } return ''; };
+      if (existing.has(norm(G.no).trim())) errs.push('No PO sudah ada di sistem');
+      const date = ERP.toISO(raw('tanggal po') || raw('tanggal')); if (!date) errs.push('Tanggal PO kosong / tidak valid');
+      const sup = supBy.get(norm(first('supplier', 'nama supplier', 'kode supplier')).trim()); if (!sup) errs.push(`Supplier "${first('supplier', 'nama supplier', 'kode supplier')}" tidak ditemukan di database Supplier`);
+      const cur = sup ? sup.currency || 'IDR' : 'IDR';
+      const pay = norm(first('pembayaran', 'term')).startsWith('tempo') ? 'tempo' : 'cash', days = parseInt(first('tempo (hari)', 'tempo')) || 0;
+      if (pay === 'tempo' && !(days > 0)) errs.push('Pembayaran Tempo butuh jumlah hari (kolom "Tempo (hari)")');
+      const fx = cur !== 'IDR' ? ERP.num(raw('rate idr') || raw('rate')) : 0;
+      const pph = ERP.num(raw('pph 23 (%)') || raw('pph 23') || 0), vat = yes(first('ppn', 'ppn 11%'));
+      const dv = ERP.num(raw('diskon') || 0), dt = /nilai|amt|rp|usd/i.test(first('jenis diskon')) ? 'amt' : 'pct';
+      const lines = [];
+      G.rows.forEach(({ r, g, line }) => {
+        const rec = { brand: g('brand'), model: g('model', 'model name'), compound: g('compound', 'compound name'), gender: g('gender'), color: g('color', 'colour'), size: g('size') };
+        if (!rec.brand && !rec.model) return;
+        const gm = ERP.GENDERS.find((x) => x.toLowerCase() === rec.gender.toLowerCase()); if (gm) rec.gender = gm;
+        const sz = ERP.SIZES.find((x) => x.toLowerCase() === rec.size.toLowerCase()); if (sz) rec.size = sz;
+        const it = itemBy.get(ERP.itemKey(rec));
+        const q = ERP.num(ERP.pick(r, 'qty', 'jumlah')), price = ERP.num(ERP.pick(r, 'harga', 'harga satuan', 'price'));
+        if (!it) { errs.push(`Baris Excel ${line}: item "${ERP.attrText(rec)}" tidak ada di Master Item`); return; }
+        if (!(q > 0)) { errs.push(`Baris Excel ${line}: Qty harus > 0`); return; }
+        if (!(price > 0)) { errs.push(`Baris Excel ${line}: Harga harus > 0`); return; }
+        lines.push({ item_id: it.id, brand: it.brand, model: it.model, compound: it.compound || null, gender: it.gender || null, color: it.color || null, size: it.size || null, unit: it.unit, order_no: g('no order', 'no order cust') || null, est_date: ERP.toISO(ERP.pick(r, 'est date', 'est. date', 'estimasi')) || null, qty: q, price });
+      });
+      if (!lines.length && !errs.length) errs.push('Tidak ada baris item');
+      const c = calc(lines, dt, dv, vat, pph > 0, pph, cur);
+      out.push({ no: G.no, date, sup, cur, errs, lines, total: c.total, hdr: sup && date ? {
+        po_number: G.no, po_date: date, supplier_id: sup.id, currency: cur, fx_rate: fx || null, payment_type: pay, tempo_mode: pay === 'tempo' ? 'days' : null, tempo_days: pay === 'tempo' ? days : null, tempo_date: null,
+        vat, pph23: pph > 0, pph23_rate: pph > 0 ? pph : null, pph23_amount: c.pphAmt, urgent: yes(first('urgent')), discount_type: dt, discount_value: dv, subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, total: c.total, notes: first('catatan', 'notes') || null,
+        est_date: lines.map((l) => l.est_date).filter(Boolean).sort()[0] || null } : null });
+    });
+    return out;
+  }
+  async function importPOs(data) {
+    const f = await ERP.pickFile(); if (!f) return;
+    let list;
+    try { list = parsePOImport(await ERP.xlsxRead(f), data); } catch (e) { ERP.toast('File tidak bisa dibaca: ' + e.message, 'err'); return; }
+    if (!list.length) { ERP.toast('Tidak ada data di file. Gunakan template (kolom No PO, Supplier, Brand, Model, Qty, Harga).', 'err'); return; }
+    const good = list.filter((x) => !x.errs.length), bad = list.filter((x) => x.errs.length);
+    const okTbl = good.length ? ERP.table([{ label: 'No PO', html: (x) => `<b>${esc(x.no)}</b>`, m: 'mt' }, { label: 'Tanggal', v: (x) => fmtDate(x.date), cls: 'nw' }, { label: 'Supplier', v: (x) => x.sup.name }, { label: 'Baris item', v: (x) => x.lines.length, cls: 'n' }, { label: 'Total', html: (x) => fmtMoney(x.total, x.cur), cls: 'n nw' }], good.map((x, i) => ({ ...x, id: 'g' + i }))) : '';
+    const errBox = bad.length ? `<div class="sec-t">Tidak bisa diimport (${bad.length} PO)</div>${bad.map((x) => `<div class="note"><b>${esc(x.no)}</b><br>${x.errs.map((e) => '• ' + esc(e)).join('<br>')}</div>`).join('')}` : '';
+    ERP.modal({
+      title: 'Import PO dari Excel', wide: true,
+      html: `<div class="note">${good.length} PO siap diimport${bad.length ? `, ${bad.length} PO bermasalah akan dilewati (perbaiki di Excel lalu import lagi — PO yang sudah masuk tidak akan terduplikasi)` : ''}. PO hasil import berstatus <b>Menunggu Approval</b>.</div>${okTbl}${errBox}`,
+      actions: good.length ? [{ icon: 'check', tip: `Import ${good.length} PO`, cls: 'primary', onClick: async (m) => {
+        let n = 0; const fails = [];
+        for (const x of good) {
+          let poId = null;
+          try {
+            const [po] = await DB.insert('purchase_orders', { ...x.hdr, status: 'pending', revision: 0 }); poId = po.id;
+            await DB.insert('po_items', x.lines.map((l, i) => ({ ...l, po_id: poId, line_no: i + 1 }))); n++;
+          } catch (e) { fails.push(x.no + ': ' + e.message); if (poId) { try { await DB.remove('purchase_orders', poId); } catch (_) {} } }
+        }
+        m.close(); S.tab = 'active';
+        ERP.toast(`${n} PO diimport${fails.length ? ', gagal: ' + fails.join('; ') : ''}`, fails.length ? 'err' : undefined);
+        ERP.refresh();
+      } }] : [],
+    });
+  }
+
   /* ---------- Daftar ---------- */
   async function renderList(v) {
     const data = await ERP.loadPO();
     const canW = ERP.can.write();
     const matches = (p) => !S.q || norm(p.po_number).includes(S.q) || norm(p.supplier.name).includes(S.q) || p.items.some((i) => norm(ERP.attrText(i)).includes(S.q));
     v.innerHTML = `<div class="toolbar">${ERP.searchBox('q', 'Cari nama supplier / brand / model / compound / color / size / no PO…')}
-      <div class="tb-actions">${canW ? btn('plus', 'Buat PO baru', 'id="b-new"', 'primary') : ''}${btn('print', 'Print daftar', 'id="b-prt"')}${btn('download', 'Export ke Excel', 'id="b-exp"')}</div></div>
+      <div class="tb-actions">${canW ? btn('plus', 'Buat PO baru', 'id="b-new"', 'primary') + btn('upload', 'Import PO dari Excel', 'id="b-imp"') + btn('template', 'Unduh template import PO', 'id="b-tpl"') : ''}${btn('print', 'Print daftar', 'id="b-prt"')}${btn('download', 'Export ke Excel', 'id="b-exp"')}</div></div>
       <div class="tabs" id="tabs"></div><div id="list"></div>`;
     $('#q').value = S.q;
     const bar = (a, b, ok) => `<div class="bar ${ok ? 'ok' : ''}"><i style="width:${b > 0 ? Math.min(100, (a / b) * 100) : 0}%"></i></div>`;
@@ -160,6 +244,8 @@
     $('#q').oninput = ERP.debounce((e) => { S.q = norm(e.target.value.trim()); draw(); });
     $('#tabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { S.tab = b.dataset.t; draw(); } };
     if ($('#b-new')) $('#b-new').onclick = () => (location.hash = '#/po/new');
+    if ($('#b-imp')) $('#b-imp').onclick = () => importPOs(data);
+    if ($('#b-tpl')) $('#b-tpl').onclick = () => ERP.xlsxExport('Template_Import_PO.xlsx', 'PO', PO_HEAD, PO_SAMPLE);
     $('#b-prt').onclick = () => ERP.printTable('Daftar PO — ' + STAGES.find((s) => s[0] === S.tab)[1], [{ label: 'No PO', v: (p) => p.po_number + (p.urgent ? ' (URGENT)' : '') }, { label: 'Tanggal', v: (p) => fmtDate(p.po_date) }, { label: 'Supplier', v: (p) => p.supplier.name }, { label: 'Total dibayar', num: true, v: (p) => fmtMoney(p.total, p.currency) }, { label: 'Approval', v: (p) => (p.status === 'approved' ? 'Approved' : 'Menunggu') }, { label: 'Diterima', v: (p) => qty(p.received) + '/' + qty(p.ordered) }, { label: 'Dibayar', num: true, v: (p) => fmtMoney(p.paid, p.currency) }, { label: 'Pembayaran', v: (p) => ERP.termText(p) }, { label: 'Est Date', v: (p) => fmtDate(p.est_date) }, { label: 'No FP', v: (p) => (p.fpNos || []).join(', ') }], draw.rows);
     $('#b-exp').onclick = () => exportPOs(draw.rows, 'PO_' + ERP.today() + '.xlsx');
     $('#list').onclick = (e) => {
