@@ -40,7 +40,7 @@
       ${p.urgent ? '<div class="urgent">URGENT — PO MENDESAK</div>' : ''}
       ${p.status !== 'approved' ? '<div class="wm">BELUM DISETUJUI SUPERVISOR — DRAFT</div>' : ''}
       <div class="grid2"><div class="box"><b>Kepada:</b><br><b>${esc(s.name)}</b><br>${esc(s.contact_person || '')}${s.position ? ' (' + esc(s.position) + ')' : ''}<br>${esc(s.billing_address || '')}<br>${esc([s.mobile, s.office_phone].filter(Boolean).join(' / '))}<br>${esc(s.email || '')}</div>
-      <div class="box"><table class="kv"><tr><td>No PO</td><td><b>${esc(p.po_number)}</b></td></tr><tr><td>Tanggal</td><td>${fmtDate(p.po_date)}</td></tr>${p.customer_order_no ? `<tr><td>No Order Customer</td><td>${esc(p.customer_order_no)}</td></tr>` : ''}<tr><td>Mata uang</td><td>${esc(cur)}${fx ? ' · Rate ' + ERP.fmtNum(fx, 2) + ' IDR' : ''}</td></tr><tr><td>Pembayaran</td><td>${esc(ERP.termText(p))}</td></tr></table></div></div>
+      <div class="box"><table class="kv"><tr><td>No PO</td><td><b>${esc(p.po_number)}</b></td></tr><tr><td>Tanggal</td><td>${fmtDate(p.po_date)}</td></tr><tr><td>Mata uang</td><td>${esc(cur)}${fx ? ' · Rate ' + ERP.fmtNum(fx, 2) + ' IDR' : ''}</td></tr><tr><td>Pembayaran</td><td>${esc(ERP.termText(p))}</td></tr></table></div></div>
       <table><thead><tr><th class="center">No</th><th>Brand</th><th>Model</th><th>Compound</th><th>Gender</th><th>Color</th><th>Size</th><th>No Order</th><th>Est Date</th><th class="n">Qty</th><th>Satuan</th><th class="n">Harga (${esc(cur)})</th>${fx ? '<th class="n">Harga (IDR)</th>' : ''}<th class="n">Jumlah (${esc(cur)})</th>${fx ? '<th class="n">Jumlah (IDR)</th>' : ''}</tr></thead><tbody>${rows}</tbody></table>
       <table class="tot" style="width:${fx ? 70 : 50}%;margin-left:auto">
         ${fx ? `<tr><td></td><td class="n muted">${esc(cur)}</td><td class="n muted">IDR</td></tr>` : ''}
@@ -92,7 +92,7 @@
         ${fx ? `<dt>Rate</dt><dd>1 ${esc(cur)} = IDR ${ERP.fmtNum(fx, 2)}</dd>` : ''}
         <dt>Status</dt><dd>${ERP.approvalBadge(p)} ${p.approved_by && um[p.approved_by] ? '<small>oleh ' + esc(um[p.approved_by].full_name) + ', ' + ERP.fmtDate((p.approved_at || '').slice(0, 10)) + '</small>' : ''}</dd>
         <dt>Dibuat oleh</dt><dd>${esc((um[p.created_by] || {}).full_name || '-')}</dd>
-        <dt>No Order Customer</dt><dd>${esc(p.customer_order_no) || '-'}</dd><dt>No FP</dt><dd>${esc((p.fpNos || []).join(', ')) || '-'}</dd><dt>No Invoice</dt><dd>${esc((p.invNos || []).join(', ')) || '-'}</dd>
+        <dt>No FP</dt><dd>${esc((p.fpNos || []).join(', ')) || '-'}</dd><dt>No Invoice</dt><dd>${esc((p.invNos || []).join(', ')) || '-'}</dd>
         ${p.notes ? `<dt>Catatan</dt><dd>${esc(p.notes)}</dd>` : ''}</dl>
         <div class="sec-t">Item</div>${lines}
         <div class="totals"><div><span>Subtotal</span><span>${M(c.subtotal)}${I(c.subtotal)}</span></div>${c.disc > 0 ? `<div><span>Diskon</span><span>- ${M(c.disc)}</span></div>` : ''}<div><span>Total sebelum PPN</span><span>${M(c.dpp)}${I(c.dpp)}</span></div>${p.vat ? `<div><span>PPN 11%</span><span>${M(c.vatAmt)}</span></div>` : ''}${p.pph23 ? `<div><span>PPh 23 (${ERP.fmtNum(p.pph23_rate, 2)}%)</span><span>- ${M(c.pphAmt)}</span></div>` : ''}<div class="gt"><span>Total dibayar</span><span>${M(c.total)}${I(c.total)}</span></div>
@@ -115,10 +115,10 @@
     const stage = (p) => STAGES.find((s) => s[0] === p.stage)[1];
     const sum = list.map((p) => [p.po_number, fmtDate(p.po_date), fmtDate(p.est_date), p.supplier.name, p.supplier.company_code || '', p.currency, fxOf(p) || '', ERP.termText(p), p.vat ? 'YA' : '', p.pph23 ? 'YA ' + p.pph23_rate + '%' : '', p.urgent ? 'YA' : '', Number(p.subtotal), Number(p.discount_amount), Number(p.subtotal) - Number(p.discount_amount), Number(p.vat_amount), Number(p.pph23_amount || 0), Number(p.total), p.paid, p.status === 'approved' ? 'Approved' : 'Menunggu approval', p.received, p.ordered, (p.fpNos || []).join(', '), (p.invNos || []).join(', '), stage(p)]);
     const det = [];
-    list.forEach((p) => p.items.forEach((i, n) => { const r = p.rc[i.id] || { G: 0, D: 0 }; det.push([p.po_number, fmtDate(p.po_date), p.customer_order_no || '', p.supplier.name, p.currency, n + 1, i.brand, i.model, i.compound || '', i.gender || '', i.color || '', i.size || '', i.order_no || '', i.est_date ? fmtDate(i.est_date) : '', Number(i.qty), i.unit, Number(i.price), ERP.round(i.qty * i.price, p.currency), fxOf(p) ? Number(i.price) * fxOf(p) : '', r.G, r.D]); }));
+    list.forEach((p) => p.items.forEach((i, n) => { const r = p.rc[i.id] || { G: 0, D: 0 }; det.push([p.po_number, fmtDate(p.po_date), p.supplier.name, p.currency, n + 1, i.brand, i.model, i.compound || '', i.gender || '', i.color || '', i.size || '', i.order_no || '', i.est_date ? fmtDate(i.est_date) : '', Number(i.qty), i.unit, Number(i.price), ERP.round(i.qty * i.price, p.currency), fxOf(p) ? Number(i.price) * fxOf(p) : '', r.G, r.D]); }));
     ERP.xlsxExportMulti(filename, [
-      { name: 'Ringkasan PO', headers: ['No PO', 'Tanggal', 'Est Date (terdekat)', 'No Order Customer', 'Supplier', 'Kode Supplier', 'Mata Uang', 'Rate IDR', 'Pembayaran', 'PPN 11%', 'PPh 23', 'Urgent', 'Subtotal', 'Diskon', 'Total sebelum PPN', 'PPN', 'PPh 23 (nilai)', 'Total dibayar', 'Sudah dibayar', 'Approval', 'Qty diterima', 'Qty dipesan', 'No FP', 'No Invoice', 'Status'], rows: sum },
-      { name: 'Detail Item', headers: ['No PO', 'Tanggal', 'No Order Customer', 'Supplier', 'Mata Uang', 'No', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'No Order', 'Est Date', 'Qty', 'Satuan', 'Harga', 'Jumlah', 'Harga IDR', 'Diterima Good', 'Diterima Defect'], rows: det },
+      { name: 'Ringkasan PO', headers: ['No PO', 'Tanggal', 'Est Date (terdekat)', 'Supplier', 'Kode Supplier', 'Mata Uang', 'Rate IDR', 'Pembayaran', 'PPN 11%', 'PPh 23', 'Urgent', 'Subtotal', 'Diskon', 'Total sebelum PPN', 'PPN', 'PPh 23 (nilai)', 'Total dibayar', 'Sudah dibayar', 'Approval', 'Qty diterima', 'Qty dipesan', 'No FP', 'No Invoice', 'Status'], rows: sum },
+      { name: 'Detail Item', headers: ['No PO', 'Tanggal', 'Supplier', 'Mata Uang', 'No', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'No Order', 'Est Date', 'Qty', 'Satuan', 'Harga', 'Jumlah', 'Harga IDR', 'Diterima Good', 'Diterima Defect'], rows: det },
     ]);
   }
 
@@ -179,10 +179,10 @@
     const pickA = (o) => Object.fromEntries(A.map((k) => [k, o[k] || '']));
     function newLine() { return { k: Math.random(), item_id: null, brand: '', model: '', compound: '', gender: '', color: '', size: '', order_no: '', est: '', unit: '', qty: 1, price: '', recvd: 0 }; }
     const st = old ? {
-      no: old.po_number, date: old.po_date, cust: old.customer_order_no || '', supplier: old.supplier.id ? old.supplier : null, payType: old.payment_type, tempoMode: old.tempo_mode || 'days', tempoDays: old.tempo_days || 30, tempoDate: old.tempo_date || '',
+      no: old.po_number, date: old.po_date, supplier: old.supplier.id ? old.supplier : null, payType: old.payment_type, tempoMode: old.tempo_mode || 'days', tempoDays: old.tempo_days || 30, tempoDate: old.tempo_date || '',
       vat: !!old.vat, pph: !!old.pph23, pphRate: old.pph23 ? old.pph23_rate : 2, urgent: !!old.urgent, discType: old.discount_type || 'pct', discVal: old.discount_value || 0, notes: old.notes || '', fx: Number(old.fx_rate) || 0,
       lines: old.items.map((i) => ({ k: Math.random(), id: i.id, item_id: i.item_id, order_no: i.order_no || '', est: i.est_date || '', ...pickA(i), qty: i.qty, price: i.price, recvd: old.recv[i.id] || 0 })),
-    } : { no: '', date: ERP.today(), cust: '', supplier: null, payType: 'cash', tempoMode: 'days', tempoDays: 30, tempoDate: '', vat: false, pph: false, pphRate: 2, urgent: false, discType: 'pct', discVal: 0, notes: '', fx: 0, lines: [] };
+    } : { no: '', date: ERP.today(), supplier: null, payType: 'cash', tempoMode: 'days', tempoDays: 30, tempoDate: '', vat: false, pph: false, pphRate: 2, urgent: false, discType: 'pct', discVal: 0, notes: '', fx: 0, lines: [] };
     if (!st.lines.length) st.lines.push(newLine());
     const cur = () => (st.supplier ? st.supplier.currency || 'IDR' : 'IDR');
     const fx = () => (cur() !== 'IDR' && st.fx > 0 ? st.fx : 0);
@@ -192,8 +192,7 @@
       <div class="card"><div class="grid c4 po-top">
         ${ERP.field('No PO * (diisi manual)', `<input id="f-pono" value="${esc(st.no)}" autocomplete="off" placeholder="mis. SSBI-DM-MAIN-202610005">`)}
         ${ERP.field('Tanggal PO', ERP.dateInput('po_date', st.date))}
-        ${ERP.field('No Order Customer', `<input id="f-cust" value="${esc(st.cust)}" autocomplete="off" placeholder="opsional">`)}
-        ${ERP.field('Supplier *', `<input id="f-sup" placeholder="Cari nama supplier…" value="${esc(st.supplier ? st.supplier.name : '')}" autocomplete="off">`, 'po-sup')}
+                ${ERP.field('Supplier *', `<input id="f-sup" placeholder="Cari nama supplier…" value="${esc(st.supplier ? st.supplier.name : '')}" autocomplete="off">`, 'po-sup')}
         ${ERP.field('Mata uang', `<input id="f-cur" value="${esc(cur())}" readonly>`, 'po-cur')}
         <label class="fld po-fx" id="fx-wrap"><span id="fx-lbl">Rate → IDR</span><input id="f-fx" inputmode="decimal" placeholder="mis. 16.300 (kosongkan jika tidak perlu)"></label>
       </div>
@@ -230,7 +229,6 @@
     $('#f-fx').oninput = (e) => { st.fx = ERP.num(e.target.value); drawLines(); };
     $('#f-notes').oninput = (e) => (st.notes = e.target.value);
     $('#f-pono').oninput = (e) => (st.no = e.target.value);
-    $('#f-cust').oninput = (e) => (st.cust = e.target.value);
 
     ERP.combo($('#f-sup'), (q) => { const n = norm(q); return sups.filter((s) => !n || norm(s.name).includes(n) || norm(s.code).includes(n) || norm(s.contact_person).includes(n)).map((s) => ({ s, label: s.name, sub: `${s.code} · ${s.currency}${s.contact_person ? ' · ' + s.contact_person : ''}` })); },
       (it) => { st.supplier = it.s; $('#f-sup').value = it.s.name; $('#f-cur').value = cur(); syncFx(); drawLines(); });
@@ -303,7 +301,7 @@
       if (!st.no) { ERP.toast('No PO wajib diisi', 'err'); return; }
       if (data.pos.some((p) => p.id !== (old || {}).id && norm(p.po_number) === norm(st.no))) { ERP.toast('No PO sudah dipakai PO lain', 'err'); return; }
       const c = calc(lines, st.discType, st.discVal, st.vat, st.pph, st.pphRate, cur());
-      const hdr = { po_number: st.no, po_date: st.date, customer_order_no: String(st.cust || '').trim() || null, est_date: lines.map((l) => l.est).filter(Boolean).sort()[0] || null, supplier_id: st.supplier.id, currency: cur(), fx_rate: fx() || null, payment_type: st.payType, tempo_mode: st.payType === 'tempo' ? st.tempoMode : null, tempo_days: st.payType === 'tempo' && st.tempoMode === 'days' ? st.tempoDays : null, tempo_date: st.payType === 'tempo' && st.tempoMode === 'date' ? st.tempoDate : null,
+      const hdr = { po_number: st.no, po_date: st.date, est_date: lines.map((l) => l.est).filter(Boolean).sort()[0] || null, supplier_id: st.supplier.id, currency: cur(), fx_rate: fx() || null, payment_type: st.payType, tempo_mode: st.payType === 'tempo' ? st.tempoMode : null, tempo_days: st.payType === 'tempo' && st.tempoMode === 'days' ? st.tempoDays : null, tempo_date: st.payType === 'tempo' && st.tempoMode === 'date' ? st.tempoDate : null,
         vat: st.vat, pph23: st.pph, pph23_rate: st.pph ? ERP.num(st.pphRate) : null, pph23_amount: c.pphAmt, urgent: st.urgent, discount_type: st.discType, discount_value: ERP.num(st.discVal), subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, total: c.total, notes: st.notes || null };
       const rec = (l, n, poId) => ({ po_id: poId, line_no: n + 1, item_id: l.item_id, brand: l.brand, model: l.model, compound: l.compound || null, gender: l.gender || null, color: l.color || null, size: l.size || null, order_no: String(l.order_no || '').trim() || null, est_date: l.est || null, unit: l.unit, qty: ERP.num(l.qty), price: ERP.num(l.price) });
       const btnSave = $('#b-save'); btnSave.disabled = true;
