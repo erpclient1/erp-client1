@@ -125,15 +125,11 @@
   /* ---------- Import PO dari Excel ---------- */
   // Satu baris Excel = satu baris item. Baris dengan No PO sama digabung jadi satu PO (data header cukup diisi di baris pertama).
   const PO_HEAD = ['No PO', 'Tanggal PO', 'Supplier', 'Pembayaran', 'Tempo (hari)', 'Rate IDR', 'PPN', 'PPh 23 (%)', 'Diskon', 'Jenis Diskon', 'URGENT', 'Catatan', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'No Order', 'Est Date', 'Qty', 'Harga IDR', 'Harga USD'];
-  const PO_SAMPLE = [
-    ['PO-CONTOH-001', '05-Jan-26', 'PT Contoh Supplier', 'Tempo', 30, 16300, 'YA', '', 5, '%', 'TIDAK', 'Contoh catatan', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '9', 'SO-001', '20-Feb-26', 100, '', 18.5],
-    ['', '', '', '', '', '', '', '', '', '', '', '', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '10', 'SO-001', '20-Feb-26', 150, '', 18.5],
-  ];
   function parsePOImport(rows, data) {
     const yes = (v) => ['ya', 'yes', 'y', '1', 'true', 'x'].includes(norm(String(v ?? '').trim()));
     const supBy = new Map(); data.sups.forEach((s) => [s.name, s.code, s.company_code].forEach((k) => k && supBy.set(norm(k).trim(), s)));
     const itemBy = new Map(); data.items.forEach((i) => { const k = ERP.itemKey(i); if (!itemBy.has(k)) itemBy.set(k, i); });
-    const existing = new Set(data.pos.map((p) => norm(p.po_number).trim()));
+    const existing = new Map(data.pos.map((p) => [norm(p.po_number).trim(), p]));   // No PO yang sudah ada: baris item ditambahkan ke PO tsb
     const groups = new Map(); let last = null;
     rows.forEach((r, n) => {
       const g = (...k) => String(ERP.pick(r, ...k) ?? '').trim();
@@ -148,17 +144,18 @@
     groups.forEach((G) => {
       const errs = [], first = (...k) => { for (const x of G.rows) { const v = x.g(...k); if (v) return v; } return ''; };
       const raw = (k) => { for (const x of G.rows) { const v = ERP.pick(x.r, k); if (v !== '' && v != null) return v; } return ''; };
-      if (existing.has(norm(G.no).trim())) errs.push('No PO sudah ada di sistem');
-      const date = ERP.toISO(raw('tanggal po') || raw('tanggal')); if (!date) errs.push('Tanggal PO kosong / tidak valid');
-      const sup = supBy.get(norm(first('supplier', 'nama supplier', 'kode supplier')).trim()); if (!sup) errs.push(`Supplier "${first('supplier', 'nama supplier', 'kode supplier')}" tidak ditemukan di database Supplier`);
+      const old = existing.get(norm(G.no).trim());      // PO sudah ada -> data header di Excel diabaikan, hanya item ditambahkan
+      const date = old ? old.po_date : ERP.toISO(raw('tanggal po') || raw('tanggal')); if (!date) errs.push('Tanggal PO kosong / tidak valid');
+      const sup = old ? old.supplier : supBy.get(norm(first('supplier', 'nama supplier', 'kode supplier')).trim()); if (!sup) errs.push(`Supplier "${first('supplier', 'nama supplier', 'kode supplier')}" tidak ditemukan di database Supplier`);
       const pay = norm(first('pembayaran', 'term')).startsWith('tempo') ? 'tempo' : 'cash', days = parseInt(first('tempo (hari)', 'tempo')) || 0;
-      if (pay === 'tempo' && !(days > 0)) errs.push('Pembayaran Tempo butuh jumlah hari (kolom "Tempo (hari)")');
+      if (!old && pay === 'tempo' && !(days > 0)) errs.push('Pembayaran Tempo butuh jumlah hari (kolom "Tempo (hari)")');
       const pph = ERP.num(raw('pph 23 (%)') || raw('pph 23') || 0), vat = yes(first('ppn', 'ppn 11%'));
       const dv = ERP.num(raw('diskon') || 0), dt = /nilai|amt|rp|usd/i.test(first('jenis diskon')) ? 'amt' : 'pct';
-      const lines = [], lineCurs = [];
+      const lines = [], lineCurs = [], missing = [];
       G.rows.forEach(({ r, g, line }) => {
         const rec = { brand: g('brand'), model: g('model', 'model name'), compound: g('compound', 'compound name'), gender: g('gender'), color: g('color', 'colour'), size: g('size') };
         if (!rec.brand && !rec.model) return;
+        if (!rec.brand || !rec.model) { errs.push(`Baris Excel ${line}: Brand dan Model wajib diisi`); return; }
         const gm = ERP.GENDERS.find((x) => x.toLowerCase() === rec.gender.toLowerCase()); if (gm) rec.gender = gm;
         const sz = ERP.SIZES.find((x) => x.toLowerCase() === rec.size.toLowerCase()); if (sz) rec.size = sz;
         const it = itemBy.get(ERP.itemKey(rec));
@@ -167,18 +164,29 @@
         if (pI !== '' && pU !== '') lc = 'both'; else if (pI !== '') { lc = 'IDR'; price = ERP.num(pI); } else if (pU !== '') { lc = 'USD'; price = ERP.num(pU); } else if (pL !== '') { lc = sup ? sup.currency || 'IDR' : 'IDR'; price = ERP.num(pL); }
         const q = ERP.num(ERP.pick(r, 'qty', 'jumlah'));
         if (lc === 'both') { errs.push(`Baris Excel ${line}: Harga IDR dan Harga USD sama-sama terisi — isi salah satu`); return; }
-        if (!it) { errs.push(`Baris Excel ${line}: item "${ERP.attrText(rec)}" tidak ada di Master Item`); return; }
+        if (!it) missing.push(ERP.attrText(rec));
         if (!(q > 0)) { errs.push(`Baris Excel ${line}: Qty harus > 0`); return; }
         if (!(price > 0)) { errs.push(`Baris Excel ${line}: Harga IDR / Harga USD harus diisi (> 0)`); return; }
         lineCurs.push(lc);
-        lines.push({ item_id: it.id, brand: it.brand, model: it.model, compound: it.compound || null, gender: it.gender || null, color: it.color || null, size: it.size || null, unit: it.unit, order_no: g('no order', 'no order cust') || null, est_date: ERP.toISO(ERP.pick(r, 'est date', 'est. date', 'estimasi')) || null, qty: q, price });
+        lines.push({ item_id: it ? it.id : null, brand: (it || rec).brand, model: (it || rec).model, compound: (it || rec).compound || null, gender: (it || rec).gender || null, color: (it || rec).color || null, size: (it || rec).size || null, unit: it ? it.unit : null, order_no: g('no order', 'no order cust') || null, est_date: ERP.toISO(ERP.pick(r, 'est date', 'est. date', 'estimasi')) || null, qty: q, price });
       });
       if (!lines.length && !errs.length) errs.push('Tidak ada baris item');
       const curs = [...new Set(lineCurs)];
       if (curs.length > 1) errs.push(`Satu PO hanya boleh satu mata uang, tetapi baris mengisi ${curs.join(' dan ')}. Pisahkan menjadi No PO yang berbeda`);
-      const cur = curs[0] || (sup ? sup.currency || 'IDR' : 'IDR');
-      const warns = []; if (sup && lines.length && cur !== (sup.currency || 'IDR')) warns.push(`Mata uang ${cur} berbeda dari data supplier (${sup.currency || 'IDR'})`);
+      const cur = old ? old.currency : curs[0] || (sup ? sup.currency || 'IDR' : 'IDR');
+      if (old && curs.length && curs[0] !== old.currency) errs.push(`PO ${old.po_number} bermata uang ${old.currency}, tetapi baris Excel mengisi ${curs[0]}`);
+      const warns = []; if (old) warns.push(`PO sudah ada — ${lines.length} baris item ditambahkan (data header Excel diabaikan, PO kembali ke Menunggu Approval)`);
+      if (missing.length) warns.push(`${missing.length} item belum ada di Master Item (${[...new Set(missing)].slice(0, 3).join('; ')}${new Set(missing).size > 3 ? '; …' : ''})`);
+      if (!old && sup && lines.length && cur !== (sup.currency || 'IDR')) warns.push(`Mata uang ${cur} berbeda dari data supplier (${sup.currency || 'IDR'})`);
       const fx = cur !== 'IDR' ? ERP.num(raw('rate idr') || raw('rate')) : 0;
+      if (old) {
+        const c = calc([...old.items, ...lines], old.discount_type, old.discount_value, old.vat, old.pph23, old.pph23_rate, cur);
+        const ests = [...old.items, ...lines].map((l) => l.est_date).filter(Boolean).sort();
+        out.push({ no: G.no, date, sup, cur, errs, warns, lines, total: c.total, append: old, hdr: {
+          subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, pph23_amount: c.pphAmt, total: c.total, est_date: ests[0] || null,
+          status: 'pending', revision: old.status === 'approved' ? (old.revision || 0) + 1 : old.revision || 0, approved_by: null, approved_at: null } });
+        return;
+      }
       const c = calc(lines, dt, dv, vat, pph > 0, pph, cur);
       out.push({ no: G.no, date, sup, cur, errs, warns, lines, total: c.total, hdr: sup && date ? {
         po_number: G.no, po_date: date, supplier_id: sup.id, currency: cur, fx_rate: fx || null, payment_type: pay, tempo_mode: pay === 'tempo' ? 'days' : null, tempo_days: pay === 'tempo' ? days : null, tempo_date: null,
@@ -197,12 +205,17 @@
     const errBox = bad.length ? `<div class="sec-t">Tidak bisa diimport (${bad.length} PO)</div>${bad.map((x) => `<div class="note"><b>${esc(x.no)}</b><br>${x.errs.map((e) => '• ' + esc(e)).join('<br>')}</div>`).join('')}` : '';
     ERP.modal({
       title: 'Import PO dari Excel', wide: true,
-      html: `<div class="note">${good.length} PO siap diimport${bad.length ? `, ${bad.length} PO bermasalah akan dilewati (perbaiki di Excel lalu import lagi — PO yang sudah masuk tidak akan terduplikasi)` : ''}. PO hasil import berstatus <b>Menunggu Approval</b>.</div>${okTbl}${errBox}`,
+      html: `<div class="note">${good.length} PO siap diimport${bad.length ? `, ${bad.length} PO bermasalah akan dilewati (perbaiki di Excel lalu import lagi — hapus dulu baris PO yang sudah berhasil masuk, karena No PO yang sudah ada akan ditambah itemnya lagi)` : ''}. PO hasil import berstatus <b>Menunggu Approval</b>. No PO yang sudah ada: baris item ditambahkan ke PO tersebut.</div>${okTbl}${errBox}`,
       actions: good.length ? [{ icon: 'check', tip: `Import ${good.length} PO`, cls: 'primary', onClick: async (m) => {
         let n = 0; const fails = [];
         for (const x of good) {
           let poId = null;
           try {
+            if (x.append) {
+              const base = Math.max(0, ...x.append.items.map((i) => i.line_no || 0));
+              await DB.insert('po_items', x.lines.map((l, i) => ({ ...l, po_id: x.append.id, line_no: base + i + 1 })));
+              await DB.update('purchase_orders', x.append.id, x.hdr); n++; continue;
+            }
             const [po] = await DB.insert('purchase_orders', { ...x.hdr, status: 'pending', revision: 0 }); poId = po.id;
             await DB.insert('po_items', x.lines.map((l, i) => ({ ...l, po_id: poId, line_no: i + 1 }))); n++;
           } catch (e) { fails.push(x.no + ': ' + e.message); if (poId) { try { await DB.remove('purchase_orders', poId); } catch (_) {} } }
@@ -253,7 +266,7 @@
     $('#tabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { S.tab = b.dataset.t; draw(); } };
     if ($('#b-new')) $('#b-new').onclick = () => (location.hash = '#/po/new');
     if ($('#b-imp')) $('#b-imp').onclick = () => importPOs(data);
-    if ($('#b-tpl')) $('#b-tpl').onclick = () => ERP.xlsxExport('Template_Import_PO.xlsx', 'PO', PO_HEAD, PO_SAMPLE);
+    if ($('#b-tpl')) $('#b-tpl').onclick = () => ERP.xlsxExport('Template_Import_PO.xlsx', 'PO', PO_HEAD, []);
     $('#b-prt').onclick = () => ERP.printTable('Daftar PO — ' + STAGES.find((s) => s[0] === S.tab)[1], [{ label: 'No PO', v: (p) => p.po_number + (p.urgent ? ' (URGENT)' : '') }, { label: 'Tanggal', v: (p) => fmtDate(p.po_date) }, { label: 'Supplier', v: (p) => p.supplier.name }, { label: 'Total dibayar', num: true, v: (p) => fmtMoney(p.total, p.currency) }, { label: 'Approval', v: (p) => (p.status === 'approved' ? 'Approved' : 'Menunggu') }, { label: 'Diterima', v: (p) => qty(p.received) + '/' + qty(p.ordered) }, { label: 'Dibayar', num: true, v: (p) => fmtMoney(p.paid, p.currency) }, { label: 'Pembayaran', v: (p) => ERP.termText(p) }, { label: 'Est Date', v: (p) => fmtDate(p.est_date) }, { label: 'No FP', v: (p) => (p.fpNos || []).join(', ') }], draw.rows);
     $('#b-exp').onclick = () => exportPOs(draw.rows, 'PO_' + ERP.today() + '.xlsx');
     $('#list').onclick = (e) => {

@@ -4,7 +4,7 @@
   const { $, esc, btn, norm, fmtDate } = ERP;
   const qty = (n) => (n == null ? '-' : ERP.fmtNum(n, Number.isInteger(+n) ? 0 : 2));
   const uniq = (a) => [...new Set(a.filter(Boolean))];
-  const R = { q: '', from: null, to: null, status: 'all', pay: 'all' };
+  const R = { q: '', from: null, to: null, status: 'all', pay: 'all', by: 'po' };
   const T = { q: '', from: null, to: null, tab: 'po', only: false };
 
   // Satu baris = satu varian pada satu PO, dipisah per Good (G) / Defect (D)
@@ -28,6 +28,7 @@
           return {
             ...base, payable, paid, payStatus, grade: g, custs: uniq(ds.map((d) => d.client.name)), doNos: uniq(ds.map((d) => d.do_number)),
             sjNos: uniq(p.receipts.filter((rc) => rc.items.some((x) => x.po_item_id === i.id && (x.grade === 'D' ? 'D' : 'G') === g)).map((rc) => rc.delivery_note_no)),
+            sjFull: uniq(p.receipts.filter((rc) => rc.items.some((x) => x.po_item_id === i.id && (x.grade === 'D' ? 'D' : 'G') === g)).map((rc) => `${rc.delivery_note_no} (${fmtDate(rc.gr_date)})`)),
             inv: uniq([...(p.invNos || []), ...ds.map((d) => d.inv_no)]), fp: uniq([...(p.fpNos || []), ...ds.map((d) => d.fp_no)]),
             poDate: p.po_date, rcvDate: p.lastRecv[i.id + '|' + g] || null,
             qtyPO: isG ? Number(i.qty) : null, recv: rec, short: isG ? Math.max(0, Number(i.qty) - r.G - r.D) : null, out,
@@ -46,14 +47,14 @@
   const gd = (r) => ERP.badge(r.grade, r.grade === 'D' ? 'err' : 'ok');
   const sumRow = (rows, k) => ERP.sum(rows, (r) => (r[k] == null ? 0 : r[k]));
 
-  function colsFor(kind) {
-    const rep = kind === 'report';
-    const dateOf = (r) => (rep ? r.poDate : r.rcvDate);
+  function colsFor(kind, by) {
+    const rep = kind === 'report', sj = rep && by === 'sj';
+    const dateOf = (r) => (rep && !sj ? r.poDate : r.rcvDate);
     return [
-      { label: 'Tanggal', v: (r) => fmtDate(dateOf(r)), cls: 'nw', k: (r) => fmtDate(dateOf(r)) },
+      { label: sj ? 'Tgl SJ (terakhir)' : rep ? 'Tgl PO' : 'Tanggal', v: (r) => fmtDate(dateOf(r)), cls: 'nw', k: (r) => fmtDate(dateOf(r)) },
       { label: 'Nama Supplier / Customer', html: partner, cls: 'sup', m: 'mf', k: partnerTxt },
       { label: 'No PO', v: (r) => r.poNo, cls: 'nw', m: 'mt', k: (r) => r.poNo },
-      { label: 'No SJ', v: (r) => r.sjNos.join(', '), k: (r) => r.sjNos.join(', ') },
+      { label: 'No SJ', v: (r) => (sj ? r.sjFull : r.sjNos).join(', '), k: (r) => (sj ? r.sjFull : r.sjNos).join(', ') },
       { label: 'No DO', v: (r) => r.doNos.join(', '), k: (r) => r.doNos.join(', ') },
       { label: 'No INV', v: (r) => r.inv.join(', '), m: 'mh', k: (r) => r.inv.join(', ') },
       { label: 'No FP', v: (r) => r.fp.join(', '), m: 'mh', k: (r) => r.fp.join(', ') },
@@ -89,18 +90,20 @@
       if (!R.from) R.from = ERP.today().slice(0, 4) + '-01-01';
       if (!R.to) R.to = ERP.today();
       v.innerHTML = filterBar('r', R) + `<div class="fld"><span>Status penerimaan</span><select id="f-st"><option value="all">Semua</option><option value="short">Belum lengkap diterima (ada Kurang)</option><option value="full">Sudah lengkap diterima</option></select></div>
+        <div class="fld"><span>Tanggal berdasarkan</span><select id="f-by"><option value="po">Tanggal PO</option><option value="sj">Tanggal SJ (Surat Jalan / terima barang)</option></select></div>
         <div class="fld"><span>Status pembayaran</span><select id="f-pay"><option value="all">Semua</option><option value="paid">Sudah Dibayar</option><option value="partial">Dibayar Sebagian</option><option value="unpaid">Belum Dibayar</option></select></div>
         <div class="tb-actions" style="margin-left:auto">${btn('download', 'Export ke Excel', 'id="b-exp"')}${btn('print', 'Print', 'id="b-prt"')}</div></div><div id="list"></div><div class="note" id="foot"></div>
         <div class="note">Satu baris = satu varian pada satu PO. <b>Qty Out</b> = barang keluar lewat Delivery Order. <b>Balance</b> = Qty Diterima − Qty Out. <b>Kurang</b> = Qty PO − (Good + Defect yang sudah diterima). <b>Status Bayar</b> mengikuti nilai barang yang sudah diterima: Sudah Dibayar / Dibayar Sebagian / Belum Dibayar (baris yang belum diterima dianggap Belum Dibayar).</div>`;
-      $('#q').value = R.q; $('#f-st').value = R.status; $('#f-pay').value = R.pay;
-      const cols = colsFor('report');
-      const rowsNow = () => all.filter((r) => r.poDate >= R.from && r.poDate <= R.to && (!R.q || searchText(r).includes(R.q)) && (R.status === 'all' || (R.status === 'short' ? r.short > 0 : r.grade === 'G' && r.short === 0)) && (R.pay === 'all' || r.payStatus === R.pay));
+      $('#q').value = R.q; $('#f-st').value = R.status; $('#f-pay').value = R.pay; $('#f-by').value = R.by;
+      let cols = colsFor('report', R.by);
+      const rowsNow = () => all.filter((r) => (R.by === 'sj' ? r.rcvDate || '' : r.poDate) >= R.from && (R.by === 'sj' ? r.rcvDate || '' : r.poDate) <= R.to && (!R.q || searchText(r).includes(R.q)) && (R.status === 'all' || (R.status === 'short' ? r.short > 0 : r.grade === 'G' && r.short === 0)) && (R.pay === 'all' || r.payStatus === R.pay));
       let cur = [];
       const draw = () => { cur = rowsNow(); $('#list').innerHTML = ERP.table(cols.map((c) => ({ ...c, label: c.label })), cur.map((r, i) => ({ ...r, id: r.poId + i })), { empty: 'Tidak ada data pada periode/filter ini.', cls: 'rpt t3', limit: 1000 }); $('#foot').innerHTML = cur.length ? footTotals(cur, 'report') : ''; };
       draw();
       $('#q').oninput = ERP.debounce((e) => { R.q = norm(e.target.value.trim()); draw(); });
       $('#f-st').onchange = (e) => { R.status = e.target.value; draw(); };
       $('#f-pay').onchange = (e) => { R.pay = e.target.value; draw(); };
+      $('#f-by').onchange = (e) => { R.by = e.target.value; cols = colsFor('report', R.by); draw(); };
       v.onchange = (e) => { if (e.target.name === 'from') R.from = ERP.parseDate(e.target.value) || R.from; if (e.target.name === 'to') R.to = ERP.parseDate(e.target.value) || R.to; if (e.target.name === 'from' || e.target.name === 'to') draw(); };
       $('#b-exp').onclick = () => ERP.xlsxExport(`Report_${R.from}_${R.to}.xlsx`, 'Report', cols.map((c) => c.label), cur.map((r) => cols.map((c) => c.k(r))));
       $('#b-prt').onclick = () => ERP.printTable('Report PO — Penerimaan & Keluar', cols.map((c, i) => ({ label: c.label, num: (c.cls || '').includes('n'), v: (r) => c.k(r) })), cur, `Periode ${fmtDate(R.from)} s/d ${fmtDate(R.to)}`);
