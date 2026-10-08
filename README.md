@@ -122,3 +122,4 @@ supabase/functions/   pin-login, admin-users
 
 - **Import Excel (07-Oct-26):** Master Item, Supplier, Client (sudah ada) dan **Purchase Order** (tombol Import + Unduh template di daftar PO). Import PO: satu baris Excel = satu item; baris dengan No PO sama digabung; supplier & item harus sudah ada di database; PO bermasalah dilewati dengan alasan; hasil berstatus Menunggu Approval.
 - **Import SO:** tombol Import + Unduh template di daftar Sales Order (client harus sudah ada; cara kerja sama dengan import PO).
+- **Import PO/SO — dua kolom harga (08-Oct-26):** template memakai **Harga IDR** dan **Harga USD**; angka disimpan apa adanya (tanpa konversi). Mata uang dokumen = kolom yang diisi; satu dokumen satu mata uang; bila beda dari data Supplier/Client hanya diberi peringatan.

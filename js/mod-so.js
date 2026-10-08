@@ -84,10 +84,10 @@
 
   /* ---------- Import SO dari Excel ---------- */
   // Satu baris Excel = satu baris item. Baris dengan No SO sama digabung jadi satu SO (data header cukup diisi di baris pertama).
-  const SO_HEAD = ['No SO', 'Tanggal SO', 'Client', 'Rate IDR', 'PPN', 'Diskon', 'Jenis Diskon', 'URGENT', 'Catatan', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'Est Date', 'ETD', 'XFD', 'Qty', 'Harga'];
+  const SO_HEAD = ['No SO', 'Tanggal SO', 'Client', 'Rate IDR', 'PPN', 'Diskon', 'Jenis Diskon', 'URGENT', 'Catatan', 'Brand', 'Model', 'Compound', 'Gender', 'Color', 'Size', 'Est Date', 'ETD', 'XFD', 'Qty', 'Harga IDR', 'Harga USD'];
   const SO_SAMPLE = [
-    ['SO-CONTOH-001', '05-Jan-26', 'PT Contoh Client', 16300, 'YA', 0, '%', 'TIDAK', 'Contoh catatan', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '9', '20-Feb-26', '06-Mar-26', '27-Mar-26', 100, 25],
-    ['', '', '', '', '', '', '', '', '', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '10', '20-Feb-26', '06-Mar-26', '27-Mar-26', 150, 25],
+    ['SO-CONTOH-001', '05-Jan-26', 'PT Contoh Client', 16300, 'YA', 0, '%', 'TIDAK', 'Contoh catatan', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '9', '20-Feb-26', '06-Mar-26', '27-Mar-26', 100, '', 25],
+    ['', '', '', '', '', '', '', '', '', 'Aero', 'Runner X', 'EVA-60', 'Man', 'Black', '10', '20-Feb-26', '06-Mar-26', '27-Mar-26', 150, '', 25],
   ];
   function parseSOImport(rows, data) {
     const yes = (v) => ['ya', 'yes', 'y', '1', 'true', 'x'].includes(norm(String(v ?? '').trim()));
@@ -111,25 +111,33 @@
       if (existing.has(norm(G.no).trim())) errs.push('No SO sudah ada di sistem');
       const date = ERP.toISO(raw('tanggal so') || raw('tanggal')); if (!date) errs.push('Tanggal SO kosong / tidak valid');
       const cli = cliBy.get(norm(first('client', 'nama client', 'id client')).trim()); if (!cli) errs.push(`Client "${first('client', 'nama client', 'id client')}" tidak ditemukan di database Client`);
-      const cur = cli ? cli.currency || 'IDR' : 'IDR';
-      const fx = cur !== 'IDR' ? ERP.num(raw('rate idr') || raw('rate')) : 0;
       const vat = yes(first('ppn', 'ppn 11%')), dv = ERP.num(raw('diskon') || 0), dt = /nilai|amt|rp|usd/i.test(first('jenis diskon')) ? 'amt' : 'pct';
-      const lines = [];
+      const lines = [], lineCurs = [];
       G.rows.forEach(({ r, g, line }) => {
         const rec = { brand: g('brand'), model: g('model', 'model name'), compound: g('compound', 'compound name'), gender: g('gender'), color: g('color', 'colour'), size: g('size') };
         if (!rec.brand && !rec.model) return;
         const gm = ERP.GENDERS.find((x) => x.toLowerCase() === rec.gender.toLowerCase()); if (gm) rec.gender = gm;
         const sz = ERP.SIZES.find((x) => x.toLowerCase() === rec.size.toLowerCase()); if (sz) rec.size = sz;
         const it = itemBy.get(ERP.itemKey(rec));
-        const q = ERP.num(ERP.pick(r, 'qty', 'jumlah')), pr = ERP.pick(r, 'harga', 'harga satuan', 'price'), price = ERP.num(pr);
+        const pI = ERP.pick(r, 'harga idr'), pU = ERP.pick(r, 'harga usd'), pL = ERP.pick(r, 'harga', 'harga satuan', 'price');
+        let lc = '', price = 0;
+        if (pI !== '' && pU !== '') lc = 'both'; else if (pI !== '') { lc = 'IDR'; price = ERP.num(pI); } else if (pU !== '') { lc = 'USD'; price = ERP.num(pU); } else if (pL !== '') { lc = cli ? cli.currency || 'IDR' : 'IDR'; price = ERP.num(pL); }
+        const q = ERP.num(ERP.pick(r, 'qty', 'jumlah'));
+        if (lc === 'both') { errs.push(`Baris Excel ${line}: Harga IDR dan Harga USD sama-sama terisi — isi salah satu`); return; }
         if (!it) { errs.push(`Baris Excel ${line}: item "${ERP.attrText(rec)}" tidak ada di Master Item`); return; }
         if (!(q > 0)) { errs.push(`Baris Excel ${line}: Qty harus > 0`); return; }
-        if (pr === '' || pr == null || price < 0) { errs.push(`Baris Excel ${line}: Harga kosong / tidak valid (boleh 0)`); return; }
+        if (!lc || price < 0) { errs.push(`Baris Excel ${line}: Harga IDR / Harga USD harus diisi (boleh 0)`); return; }
+        lineCurs.push(lc);
         lines.push({ item_id: it.id, brand: it.brand, model: it.model, compound: it.compound || null, gender: it.gender || null, color: it.color || null, size: it.size || null, unit: it.unit, est_date: ERP.toISO(ERP.pick(r, 'est date', 'est. date')) || null, etd: ERP.toISO(ERP.pick(r, 'etd')) || null, xfd: ERP.toISO(ERP.pick(r, 'xfd')) || null, qty: q, price });
       });
       if (!lines.length && !errs.length) errs.push('Tidak ada baris item');
+      const curs = [...new Set(lineCurs)];
+      if (curs.length > 1) errs.push(`Satu SO hanya boleh satu mata uang, tetapi baris mengisi ${curs.join(' dan ')}. Pisahkan menjadi No SO yang berbeda`);
+      const cur = curs[0] || (cli ? cli.currency || 'IDR' : 'IDR');
+      const warns = []; if (cli && lines.length && cur !== (cli.currency || 'IDR')) warns.push(`Mata uang ${cur} berbeda dari data client (${cli.currency || 'IDR'})`);
+      const fx = cur !== 'IDR' ? ERP.num(raw('rate idr') || raw('rate')) : 0;
       const c = calc(lines, dt, dv, vat, cur);
-      out.push({ no: G.no, date, cli, cur, errs, lines, total: c.total, hdr: cli && date ? {
+      out.push({ no: G.no, date, cli, cur, errs, warns, lines, total: c.total, hdr: cli && date ? {
         so_number: G.no, so_date: date, client_id: cli.id, currency: cur, fx_rate: fx || null, ...termOf(cli), vat, urgent: yes(first('urgent')),
         discount_type: dt, discount_value: dv, subtotal: c.subtotal, discount_amount: c.disc, vat_amount: c.vatAmt, total: c.total, notes: first('catatan', 'notes') || null } : null });
     });
@@ -141,7 +149,7 @@
     try { list = parseSOImport(await ERP.xlsxRead(f), data); } catch (e) { ERP.toast('File tidak bisa dibaca: ' + e.message, 'err'); return; }
     if (!list.length) { ERP.toast('Tidak ada data di file. Gunakan template (kolom No SO, Client, Brand, Model, Qty, Harga).', 'err'); return; }
     const good = list.filter((x) => !x.errs.length), bad = list.filter((x) => x.errs.length);
-    const okTbl = good.length ? ERP.table([{ label: 'No SO', html: (x) => `<b>${esc(x.no)}</b>`, m: 'mt' }, { label: 'Tanggal', v: (x) => fmtDate(x.date), cls: 'nw' }, { label: 'Client', v: (x) => x.cli.name }, { label: 'Baris item', v: (x) => x.lines.length, cls: 'n' }, { label: 'Total', html: (x) => fmtMoney(x.total, x.cur), cls: 'n nw' }], good.map((x, i) => ({ ...x, id: 'g' + i }))) : '';
+    const okTbl = good.length ? ERP.table([{ label: 'No SO', html: (x) => `<b>${esc(x.no)}</b>`, m: 'mt' }, { label: 'Tanggal', v: (x) => fmtDate(x.date), cls: 'nw' }, { label: 'Client', v: (x) => x.cli.name }, { label: 'Baris item', v: (x) => x.lines.length, cls: 'n' }, { label: 'Total', html: (x) => fmtMoney(x.total, x.cur), cls: 'n nw' }, { label: 'Catatan', html: (x) => (x.warns.length ? `<span class="neg">${esc(x.warns.join('; '))}</span>` : ''), m: 'mf' }], good.map((x, i) => ({ ...x, id: 'g' + i }))) : '';
     const errBox = bad.length ? `<div class="sec-t">Tidak bisa diimport (${bad.length} SO)</div>${bad.map((x) => `<div class="note"><b>${esc(x.no)}</b><br>${x.errs.map((e) => '• ' + esc(e)).join('<br>')}</div>`).join('')}` : '';
     ERP.modal({
       title: 'Import Sales Order dari Excel', wide: true,
@@ -224,7 +232,8 @@
       lines: old.items.map((i) => ({ k: Math.random(), id: i.id, item_id: i.item_id, ...pickA(i), est: i.est_date || '', etd: i.etd || '', xfd: i.xfd || '', qty: i.qty, price: i.price })),
     } : { no: '', date: ERP.today(), client: null, vat: false, urgent: false, discType: 'pct', discVal: 0, notes: '', fx: 0, lines: [] };
     if (!st.lines.length) st.lines.push(newLine());
-    const cur = () => (st.client ? st.client.currency || 'IDR' : 'IDR');
+    const cur0 = old ? old.currency : null, cli0 = old ? old.client_id : null;   // SO hasil import bisa bermata uang beda dari client
+    const cur = () => (st.client ? (cur0 && st.client.id === cli0 ? cur0 : st.client.currency || 'IDR') : 'IDR');
     const fx = () => (cur() !== 'IDR' && st.fx > 0 ? st.fx : 0);
     const locked = !!(old && old.poLinks.length);   // No SO sudah dipakai di PO: tidak boleh diganti
 
