@@ -579,3 +579,6 @@ alter table payments add column if not exists pay_rate     numeric(18,6);   -- I
 alter table purchase_orders add column if not exists customer_order_no text;
 alter table po_items add column if not exists order_no text;
 alter table po_items add column if not exists est_date date;
+
+
+-- ===== REVISI 006 & 007: lihat migration_006.sql dan migration_007.sql (Sales Order) =====

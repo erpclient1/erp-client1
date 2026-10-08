@@ -107,6 +107,7 @@
         it.poLines.forEach(({ p, i }) => { const r = p.rc[i.id] || { G: 0, D: 0 }, o = p.ou[i.id] || { G: 0, D: 0 }; g += r.G; d += r.D; out += o.G + o.D; pq += Number(i.qty); });
         it.recvG = g; it.recvD = d; it.recv = g + d; it.out = out; it.poQty = pq;
       });
+      s.est = s.items.map((i) => i.est_date).filter(Boolean).sort()[0] || '';
       s.ordered = ERP.sum(s.items, (i) => Number(i.qty));
       s.received = ERP.sum(s.items, (i) => Math.min(Number(i.qty), i.recv));
       s.allReceived = s.items.length > 0 && s.items.every((i) => i.recv >= Number(i.qty));

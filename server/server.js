@@ -159,7 +159,7 @@ function checkUnique(t, row) {
   if (t === 'items' && store.items.some((r) => r.id !== row.id && variantKey(r) === variantKey(row))) throw fail(400, 'Item dengan kombinasi yang sama sudah ada');
 }
 const PO_CONTENT = ['po_date', 'supplier_id', 'currency', 'fx_rate', 'payment_type', 'tempo_mode', 'tempo_days', 'tempo_date', 'vat', 'pph23', 'pph23_rate', 'pph23_amount', 'urgent', 'discount_type', 'discount_value', 'subtotal', 'discount_amount', 'vat_amount', 'total', 'notes'];
-const SO_CONTENT = ['so_date', 'client_id', 'currency', 'fx_rate', 'payment_type', 'tempo_mode', 'tempo_days', 'vat', 'urgent', 'discount_type', 'discount_value', 'subtotal', 'discount_amount', 'vat_amount', 'total', 'notes'];
+const SO_CONTENT = ['so_date', 'client_id', 'currency', 'fx_rate', 'payment_type', 'tempo_mode', 'tempo_days', 'tempo_date', 'vat', 'pph23', 'pph23_rate', 'pph23_amount', 'urgent', 'discount_type', 'discount_value', 'subtotal', 'discount_amount', 'vat_amount', 'total', 'notes'];
 const same = (a, b) => (a == null && b == null) || String(a) === String(b);
 
 function guardPO(old, row, user, keys = PO_CONTENT) {

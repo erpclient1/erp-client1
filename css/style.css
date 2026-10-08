@@ -173,7 +173,9 @@ textarea{resize:vertical;min-height:60px}
 .line .stk{color:var(--muted);font-size:12.5px}
 @media (max-width:760px){.line.do{grid-template-columns:24px 1fr 1fr 34px}}
 .lines .lines{overflow:visible}
-.line.so{grid-template-columns:26px minmax(130px,1.3fr) minmax(90px,1fr) minmax(80px,.9fr) 52px minmax(80px,.9fr) 46px 124px 124px 124px 66px 46px 100px 110px 34px;min-width:1260px}
+.line.so{grid-template-columns:26px minmax(130px,1.3fr) minmax(90px,1fr) minmax(80px,.9fr) 52px minmax(80px,.9fr) 46px 110px 124px 124px 124px 66px 46px 100px 110px 34px;min-width:1390px}
+.line.so.fx{grid-template-columns:26px minmax(130px,1.2fr) minmax(90px,1fr) minmax(80px,.9fr) 52px minmax(80px,.9fr) 46px 110px 124px 124px 124px 62px 46px 96px 100px 106px 114px 34px;min-width:1720px}
+.line.so .oo input{width:100%}
 .line.so .at,.line.so .un{font-size:12.5px;overflow-wrap:anywhere}.line.so .at-all{display:none}.line.so .dfield{width:100%}
 /* ---- PO baris item (No-Brand-Model-Compound-Gender-Color-Size-Qty-Satuan-Harga) ---- */
 .line.po{grid-template-columns:26px minmax(0,1.4fr) minmax(0,1.2fr) minmax(0,1fr) 52px minmax(0,.9fr) 46px minmax(0,1fr) 124px 66px 46px 100px 110px 34px}
@@ -188,7 +190,7 @@ textarea{resize:vertical;min-height:60px}
 @media (max-width:760px){
  .line.po,.line.po.fx{grid-template-columns:24px 1fr 1fr 34px}
  .line.po .at{display:none}.line.po .at-all{display:block;grid-column:2/-1;color:var(--muted);font-size:12px}
- .line.so{grid-template-columns:24px 1fr 1fr 34px;min-width:0}.line.so .at{display:none}.line.so .at-all{display:block;grid-column:2/-1;color:var(--muted);font-size:12px}.line.so .dd{grid-column:2/4}.line.so .qt{grid-column:2}.line.so .un{grid-column:3}.line.so .it{grid-column:2/4}
+ .line.so,.line.so.fx{grid-template-columns:24px 1fr 1fr 34px;min-width:0}.line.so .oo{grid-column:2/4}.line.so .at{display:none}.line.so .at-all{display:block;grid-column:2/-1;color:var(--muted);font-size:12px}.line.so .dd{grid-column:2/4}.line.so .qt{grid-column:2}.line.so .un{grid-column:3}.line.so .it{grid-column:2/4}
  .line.po .oo{grid-column:2}.line.po .ed{grid-column:3}.line.po .it{grid-column:2/4}.line.po .qt{grid-column:2}.line.po .un{grid-column:3}.line.po .pr{grid-column:2/4}.line.po .amt{grid-column:2/4;text-align:left}.line.po .rm{grid-column:4;grid-row:1}
  .tbl.t3 tr{grid-template-columns:1fr 1fr 1fr}.tbl.t3 td.mt{grid-column:1/-1}.tbl.t3 td.mf{grid-column:1/-1}.tbl.t3 td{font-size:12px}
  .grid.c4{grid-template-columns:1fr 1fr}
